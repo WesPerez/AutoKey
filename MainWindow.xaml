@@ -1,0 +1,301 @@
+<Window x:Class="AutoKey.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:AutoKey"
+        xmlns:controls="clr-namespace:AutoKey.Controls"
+        Title="后台按键工具" Height="720" Width="880"
+        Icon="app.ico"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="CanResizeWithGrip"
+        MinHeight="600" MinWidth="780"
+        Background="#F0F0F0"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+
+    <Window.Resources>
+        <local:StringToColorConverter x:Key="ColorConverter"/>
+
+        <Style x:Key="ActionButton" TargetType="Button">
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="12,4"/>
+            <Setter Property="Margin" Value="3,0"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#AAAAAA"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#E8E8E8"/>
+                </Trigger>
+                <Trigger Property="IsPressed" Value="True">
+                    <Setter Property="Background" Value="#D0D0D0"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="StartButton" TargetType="Button" BasedOn="{StaticResource ActionButton}">
+            <Setter Property="Background" Value="#4CAF50"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="MinWidth" Value="70"/>
+            <Setter Property="BorderBrush" Value="#388E3C"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#43A047"/>
+                </Trigger>
+                <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                    <Setter Property="Background" Value="#F44336"/>
+                    <Setter Property="BorderBrush" Value="#D32F2F"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="KeyRowBorder" TargetType="Border">
+            <Setter Property="Background" Value="White"/>
+            <Setter Property="BorderBrush" Value="#E0E0E0"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="Margin" Value="0,2"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="8">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Top action buttons -->
+        <Border Grid.Row="0" Background="White" BorderBrush="#D0D0D0" BorderThickness="1"
+                CornerRadius="4" Padding="8,6" Margin="0,0,0,6">
+            <DockPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <Button x:Name="btnStart" Content="{Binding StartButtonText}"
+                            Style="{StaticResource StartButton}" Click="BtnStart_Click"/>
+                    <Separator Margin="6,4" Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}"/>
+                    <Button x:Name="btnBindAll" Content="绑定窗口" Style="{StaticResource ActionButton}"
+                            Click="BtnBindAll_Click" ToolTip="绑定当前前台窗口"/>
+                    <Button x:Name="btnUnbind" Content="解除绑定" Style="{StaticResource ActionButton}"
+                            Click="BtnUnbind_Click" ToolTip="解除窗口绑定"/>
+                    <Separator Margin="6,4" Style="{StaticResource {x:Static ToolBar.SeparatorStyleKey}}"/>
+                    <TextBlock VerticalAlignment="Center" Margin="6,0" Foreground="#666" FontSize="12">
+                        <Run Text="目标窗口: "/>
+                        <Run Text="{Binding BoundWindowTitle, Mode=OneWay}" FontWeight="Bold" Foreground="#333"/>
+                    </TextBlock>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right">
+                    <TextBlock VerticalAlignment="Center" Foreground="#888" FontSize="11" Margin="0,0,8,0">
+                        左Alt = 开始/停止 | Ctrl+Alt+空格 = 绑定鼠标指向窗口 | 右键拖拽绑定
+                    </TextBlock>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- Main content area -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="6"/>
+                <ColumnDefinition Width="260"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Left: Key configuration list -->
+            <Border Grid.Column="0" Background="White" BorderBrush="#D0D0D0" BorderThickness="1"
+                    CornerRadius="4" Padding="6">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Header -->
+                    <Border Grid.Row="0" Background="#F5F5F5" CornerRadius="3" Padding="8,5" Margin="0,0,0,4">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="40"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="80"/>
+                                <ColumnDefinition Width="50"/>
+                            </Grid.ColumnDefinitions>
+                            <!-- Enable column with select all / invert -->
+                            <StackPanel Grid.Column="0" HorizontalAlignment="Center">
+                                <CheckBox x:Name="chkSelectAll" Content="" HorizontalAlignment="Center"
+                                          ToolTip="全选/取消全选" Checked="ChkSelectAll_Changed" Unchecked="ChkSelectAll_Changed"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                    <Button Content="全选" FontSize="10" Padding="2,0" Margin="0,1"
+                                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                            Foreground="#1565C0" Click="BtnSelectAll_Click"/>
+                                    <TextBlock Text="/" FontSize="10" Foreground="#999" VerticalAlignment="Center"/>
+                                    <Button Content="反选" FontSize="10" Padding="2,0" Margin="0,1"
+                                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                            Foreground="#1565C0" Click="BtnInvertSelection_Click"/>
+                                </StackPanel>
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text="按键" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" Foreground="#555"/>
+                            <TextBlock Grid.Column="2" Text="独立随机延迟(ms)" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" Foreground="#555"/>
+                            <TextBlock Grid.Column="3" Text="延迟(ms)" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" Foreground="#555"/>
+                            <TextBlock Grid.Column="4" Text="状态" FontWeight="Bold" FontSize="12"
+                                       HorizontalAlignment="Center" Foreground="#555"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Key list -->
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="KeyList">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Style="{StaticResource KeyRowBorder}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="40"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="80"/>
+                                                <ColumnDefinition Width="50"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled}"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+
+                                            <controls:KeyCaptureBox Grid.Column="1"
+                                                CapturedKeyName="{Binding KeyName, Mode=TwoWay}"
+                                                CapturedKeyCode="{Binding KeyCode, Mode=TwoWay}"
+                                                Tag="{Binding}"
+                                                Margin="4,0"
+                                                KeyCaptured="KeyCaptureBox_KeyCaptured"/>
+
+                                            <TextBox Grid.Column="2"
+                                                     Text="{Binding RandomDelay, UpdateSourceTrigger=PropertyChanged}"
+                                                     VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
+                                                     Margin="4,0" Height="28" FontSize="13"/>
+
+                                            <TextBox Grid.Column="3"
+                                                     Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}"
+                                                     VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
+                                                     Margin="4,0" Height="28" FontSize="13"/>
+
+                                            <Ellipse Grid.Column="4" Width="14" Height="14"
+                                                     HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <Ellipse.Fill>
+                                                    <SolidColorBrush Color="{Binding StatusColor, Converter={StaticResource ColorConverter}}"/>
+                                                </Ellipse.Fill>
+                                            </Ellipse>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+
+            <!-- Right: Help panel -->
+            <Border Grid.Column="2" Background="White" BorderBrush="#D0D0D0" BorderThickness="1"
+                    CornerRadius="4" Padding="10">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="使用说明" FontWeight="Bold" FontSize="14"
+                               Foreground="#1565C0" Margin="0,0,0,8"/>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="20" Foreground="#333">
+<Run Foreground="#1565C0" FontWeight="Bold">1. 绑定窗口</Run>
+<LineBreak/>
+按住鼠标右键拖动到目标窗口后松开即可绑定。也可用 Ctrl+Alt+Space 绑定鼠标指向的窗口，或点击"绑定窗口"按钮选择。
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">2. 设置按键</Run>
+<LineBreak/>
+点击按键输入框，按下需要绑定的键盘按键即可设置。按 Esc 清除。每行可独立设置按键和延迟。
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">3. 延迟设置</Run>
+<LineBreak/>
+"延迟(ms)" 为每次按键间隔。"独立随机延迟" 为该按键单独随机延迟范围(±ms)。底部"随机延迟"为全局范围。
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">4. 独立循环</Run>
+<LineBreak/>
+勾选后每个按键独立运行循环，互不影响。取消则所有按键依次发送。
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">5. 全选/反选</Run>
+<LineBreak/>
+表头的全选复选框可一键启用/禁用所有行。也可点击"全选"或"反选"按钮。
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">6. 配置管理</Run>
+<LineBreak/>
+可保存和加载多套配置。关闭窗口时会自动保存当前配置。
+<LineBreak/><LineBreak/>
+<Run Foreground="#E65100" FontWeight="Bold">快捷键:</Run>
+<LineBreak/>
+左Alt - 开始/停止
+<LineBreak/>
+Ctrl+Alt+空格 - 绑定鼠标指向窗口
+<LineBreak/>
+右键拖拽 - 绑定目标窗口
+<LineBreak/><LineBreak/>
+<Run Foreground="#C62828" FontWeight="Bold">提示: </Run>
+<Run Foreground="#555">后台发送按键使用 PostMessage 方式。部分应用可能需要前台模式。</Run>
+                        </TextBlock>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Bottom settings -->
+        <Border Grid.Row="2" Background="White" BorderBrush="#D0D0D0" BorderThickness="1"
+                CornerRadius="4" Padding="10,8" Margin="0,6,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="循环模式:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="13"/>
+                    <ComboBox x:Name="cmbLoopMode" Width="140" Height="28" FontSize="13"
+                              ItemsSource="{Binding LoopModes}" SelectedItem="{Binding LoopMode}"
+                              VerticalContentAlignment="Center"/>
+
+                    <CheckBox Content="独立循环" IsChecked="{Binding IndependentLoop}"
+                              VerticalAlignment="Center" Margin="16,0,0,0" FontSize="13"/>
+
+                    <TextBlock Text="随机延迟(±ms):" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
+                    <TextBox Text="{Binding GlobalRandomDelay, UpdateSourceTrigger=PropertyChanged}"
+                             Width="70" Height="28" FontSize="13"
+                             VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+
+                    <TextBlock VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12" Foreground="#888">
+                        <Run Text="状态: "/>
+                        <Run Text="{Binding StatusText, Mode=OneWay}" Foreground="#333"/>
+                    </TextBlock>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="配置:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="13"/>
+                    <ComboBox x:Name="cmbConfig" Width="100" Height="28" FontSize="13"
+                              IsEditable="True"
+                              ItemsSource="{Binding ConfigNames}" SelectedItem="{Binding SelectedConfig}"
+                              Text="配置名"
+                              VerticalContentAlignment="Center"
+                              LostFocus="CmbConfig_LostFocus"/>
+                    <Button Content="保存配置" Style="{StaticResource ActionButton}" Margin="6,0,0,0"
+                            Click="BtnSaveConfig_Click"/>
+                    <Button Content="加载配置" Style="{StaticResource ActionButton}" Margin="3,0,0,0"
+                            Click="BtnLoadConfig_Click"/>
+                    <Button Content="删除配置" Style="{StaticResource ActionButton}" Margin="3,0,0,0"
+                            Foreground="#D32F2F" Click="BtnDeleteConfig_Click"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
