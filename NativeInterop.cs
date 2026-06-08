@@ -1,6 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace AutoKey
 {
@@ -37,6 +38,7 @@ namespace AutoKey
         public const ushort KEYEVENTF_SCANCODE = 0x0008;
 
         public const int WH_MOUSE_LL = 14;
+        public const int WH_KEYBOARD_LL = 13;
         public const int WM_RBUTTONDOWN = 0x0204;
         public const int WM_RBUTTONUP = 0x0205;
         #endregion
@@ -108,8 +110,14 @@ namespace AutoKey
         [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
-        [DllImport("user32.dll")]
-        public static extern long GetWindowLong(IntPtr hWnd, int nIndex);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+        public static extern IntPtr GetWindowLong32(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongPtr")]
+        public static extern IntPtr GetWindowLong64(IntPtr hWnd, int nIndex);
+
+        public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
+            => IntPtr.Size == 8 ? GetWindowLong64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
 
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -154,11 +162,12 @@ namespace AutoKey
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
         #endregion
 
-        #region Mouse Hook Functions
-        public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
-
+        #region Hook Functions
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+        [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
 
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -169,6 +178,19 @@ namespace AutoKey
 
         [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+        public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+        public delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KBDLLHOOKSTRUCT
+        {
+            public uint vkCode;
+            public uint scanCode;
+            public uint flags;
+            public uint time;
+            public IntPtr dwExtraInfo;
+        }
         #endregion
 
         #region Ancestor Functions
@@ -180,12 +202,10 @@ namespace AutoKey
         /// <summary>
         /// Send a key press to a specific window handle using PostMessage (background).
         /// </summary>
-        public static void SendKeyToWindow(IntPtr hWnd, int vkCode)
+        public static async Task SendKeyToWindowAsync(IntPtr hWnd, int vkCode)
         {
             uint scanCode = MapVirtualKey((uint)vkCode, 0);
-            // lParam for WM_KEYDOWN: repeat=1, scancode, extended, context=0, previous=0, transition=0
             int lParamDown = 1 | ((int)scanCode << 16);
-            // Check if extended key
             bool isExtended = IsExtendedKey(vkCode);
             if (isExtended)
                 lParamDown |= (1 << 24);
@@ -193,8 +213,7 @@ namespace AutoKey
             int lParamUp = lParamDown | (1 << 30) | (1 << 31);
 
             PostMessage(hWnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)lParamDown);
-            // Small delay between down and up for some apps to register
-            System.Threading.Thread.Sleep(15);
+            await Task.Delay(15);
             PostMessage(hWnd, WM_KEYUP, (IntPtr)vkCode, (IntPtr)lParamUp);
         }
 
@@ -253,7 +272,7 @@ namespace AutoKey
             EnumWindows((hWnd, lParam) =>
             {
                 if (!IsWindowVisible(hWnd)) return true;
-                long exStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+                long exStyle = GetWindowLongPtr(hWnd, GWL_EXSTYLE).ToInt64();
                 if ((exStyle & WS_EX_TOOLWINDOW) != 0) return true;
 
                 var sb = new StringBuilder(256);

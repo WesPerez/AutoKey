@@ -181,7 +181,7 @@ namespace AutoKey
             {
                 while (!token.IsCancellationRequested)
                 {
-                    SendKey(key);
+                    await SendKeyAsync(key);
                     int delay = CalcDelay(key);
                     await Task.Delay(delay, token);
                     currentLoop++;
@@ -208,10 +208,16 @@ namespace AutoKey
                         if (token.IsCancellationRequested) break;
                         if (!key.IsEnabled || key.KeyCode <= 0) continue;
                         key.IsRunning = true;
-                        SendKey(key);
-                        int delay = CalcDelay(key);
-                        await Task.Delay(delay, token);
-                        key.IsRunning = false;
+                        try
+                        {
+                            await SendKeyAsync(key);
+                            int delay = CalcDelay(key);
+                            await Task.Delay(delay, token);
+                        }
+                        finally
+                        {
+                            key.IsRunning = false;
+                        }
                     }
                     currentLoop++;
                     if (loopCount > 0 && currentLoop >= loopCount) break;
@@ -235,12 +241,12 @@ namespace AutoKey
             return Math.Max(50, delay);
         }
 
-        private void SendKey(KeyConfig key)
+        private async Task SendKeyAsync(KeyConfig key)
         {
             try
             {
                 if (IsWindowBound && _boundWindowHandle != IntPtr.Zero)
-                    NativeInterop.SendKeyToWindow(_boundWindowHandle, key.KeyCode);
+                    await NativeInterop.SendKeyToWindowAsync(_boundWindowHandle, key.KeyCode);
                 else
                     NativeInterop.SendKeyForeground(key.KeyCode);
             }
@@ -299,11 +305,20 @@ namespace AutoKey
             return dir;
         }
 
+        private static string SanitizeConfigName(string name)
+        {
+            string sanitized = name.Trim();
+            foreach (char c in Path.GetInvalidFileNameChars())
+                sanitized = sanitized.Replace(c, '_');
+            if (string.IsNullOrWhiteSpace(sanitized))
+                sanitized = "默认";
+            return sanitized;
+        }
+
         public void SaveConfig()
         {
             try
             {
-                // Convert to plain DTO for reliable serialization
                 var dto = new ConfigDto
                 {
                     IndependentLoop = IndependentLoop,
@@ -324,7 +339,7 @@ namespace AutoKey
                     });
                 }
 
-                string name = string.IsNullOrWhiteSpace(SelectedConfig) ? "默认" : SelectedConfig.Trim();
+                string name = SanitizeConfigName(SelectedConfig);
                 string filePath = Path.Combine(GetConfigDirectory(), $"{name}.json");
                 string json = JsonSerializer.Serialize(dto, JsonOptions);
                 File.WriteAllText(filePath, json);
@@ -340,7 +355,7 @@ namespace AutoKey
         {
             try
             {
-                string name = string.IsNullOrWhiteSpace(SelectedConfig) ? "默认" : SelectedConfig.Trim();
+                string name = SanitizeConfigName(SelectedConfig);
                 string filePath = Path.Combine(GetConfigDirectory(), $"{name}.json");
                 if (!File.Exists(filePath))
                 {
@@ -411,7 +426,7 @@ namespace AutoKey
         {
             try
             {
-                string name = string.IsNullOrWhiteSpace(SelectedConfig) ? "默认" : SelectedConfig.Trim();
+                string name = SanitizeConfigName(SelectedConfig);
                 if (name == "默认")
                 {
                     StatusText = "默认配置不能删除";

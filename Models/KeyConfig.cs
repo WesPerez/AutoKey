@@ -40,14 +40,14 @@ namespace AutoKey
         public int Delay
         {
             get => _delay;
-            set { _delay = value; OnPropertyChanged(); }
+            set { _delay = Math.Max(50, value); OnPropertyChanged(); }
         }
 
         [JsonPropertyName("randomDelay")]
         public int RandomDelay
         {
             get => _randomDelay;
-            set { _randomDelay = value; OnPropertyChanged(); }
+            set { _randomDelay = Math.Max(0, value); OnPropertyChanged(); }
         }
 
         [JsonIgnore]

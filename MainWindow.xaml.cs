@@ -33,7 +33,6 @@ namespace AutoKey
         private IntPtr _windowHandle;
         private HwndSource? _hwndSource;
 
-        private const int HOTKEY_TOGGLE = 1;
         private const int HOTKEY_BIND_WINDOW = 2;
 
         // Right-click drag state
@@ -43,6 +42,12 @@ namespace AutoKey
         // Low-level mouse hook for global right-click detection
         private IntPtr _mouseHookId = IntPtr.Zero;
         private NativeInterop.LowLevelMouseProc? _mouseProc;
+
+        // Low-level keyboard hook for Left Alt hotkey
+        private IntPtr _keyboardHookId = IntPtr.Zero;
+        private NativeInterop.LowLevelKeyboardProc? _keyboardProc;
+        private bool _leftAltDown;
+        private bool _leftAltSolo;
 
         public MainWindow()
         {
@@ -59,12 +64,14 @@ namespace AutoKey
                 _hwndSource = HwndSource.FromHwnd(_windowHandle);
                 _hwndSource?.AddHook(WndProc);
 
-                NativeInterop.RegisterHotKey(_windowHandle, HOTKEY_TOGGLE, NativeInterop.MOD_NOREPEAT, 0xA4);
                 NativeInterop.RegisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW,
                     NativeInterop.MOD_CONTROL | NativeInterop.MOD_ALT, 0x20);
 
                 // Install global mouse hook for right-click drag binding
                 InstallMouseHook();
+
+                // Install global keyboard hook for Left Alt hotkey
+                InstallKeyboardHook();
 
                 ViewModel.SelectedConfig = "默认";
                 ViewModel.LoadConfig();
@@ -97,11 +104,11 @@ namespace AutoKey
 
             if (_windowHandle != IntPtr.Zero)
             {
-                NativeInterop.UnregisterHotKey(_windowHandle, HOTKEY_TOGGLE);
                 NativeInterop.UnregisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW);
             }
 
             UninstallMouseHook();
+            UninstallKeyboardHook();
             _hwndSource?.RemoveHook(WndProc);
         }
 
@@ -110,10 +117,10 @@ namespace AutoKey
             if (msg == NativeInterop.WM_HOTKEY)
             {
                 int hotkeyId = wParam.ToInt32();
-                switch (hotkeyId)
+                if (hotkeyId == HOTKEY_BIND_WINDOW)
                 {
-                    case HOTKEY_TOGGLE: ToggleStartStop(); handled = true; break;
-                    case HOTKEY_BIND_WINDOW: BindWindowUnderCursor(); handled = true; break;
+                    BindWindowUnderCursor();
+                    handled = true;
                 }
             }
             return IntPtr.Zero;
@@ -175,6 +182,69 @@ namespace AutoKey
                 }
             }
             return NativeInterop.CallNextHookEx(_mouseHookId, nCode, wParam, lParam);
+        }
+
+        #endregion
+
+        #region Global Keyboard Hook (for Left Alt hotkey)
+
+        private void InstallKeyboardHook()
+        {
+            _keyboardProc = KeyboardHookCallback;
+            using var curProcess = System.Diagnostics.Process.GetCurrentProcess();
+            using var curModule = curProcess.MainModule!;
+            _keyboardHookId = NativeInterop.SetWindowsHookEx(
+                NativeInterop.WH_KEYBOARD_LL, _keyboardProc,
+                NativeInterop.GetModuleHandle(curModule.ModuleName), 0);
+        }
+
+        private void UninstallKeyboardHook()
+        {
+            if (_keyboardHookId != IntPtr.Zero)
+            {
+                NativeInterop.UnhookWindowsHookEx(_keyboardHookId);
+                _keyboardHookId = IntPtr.Zero;
+            }
+        }
+
+        private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+        {
+            if (nCode >= 0)
+            {
+                int msg = wParam.ToInt32();
+                var kbData = Marshal.PtrToStructure<NativeInterop.KBDLLHOOKSTRUCT>(lParam);
+
+                // VK_LMENU = 0xA4, scan code 56 (0x38) for left, right has LLKHF_EXTENDED flag
+                bool isLeftAlt = kbData.vkCode == 0xA4 && (kbData.flags & 0x10) == 0;
+
+                if (isLeftAlt)
+                {
+                    if (msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN)
+                    {
+                        if (!_leftAltDown)
+                        {
+                            _leftAltDown = true;
+                            _leftAltSolo = true;
+                        }
+                    }
+                    else if (msg == NativeInterop.WM_KEYUP || msg == NativeInterop.WM_SYSKEYUP)
+                    {
+                        if (_leftAltDown && _leftAltSolo)
+                        {
+                            _leftAltDown = false;
+                            _leftAltSolo = false;
+                            Dispatcher.BeginInvoke(new Action(() => ToggleStartStop()));
+                        }
+                        _leftAltDown = false;
+                    }
+                }
+                else if (_leftAltDown && (msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN))
+                {
+                    // Another key pressed while Left Alt held - cancel solo
+                    _leftAltSolo = false;
+                }
+            }
+            return NativeInterop.CallNextHookEx(_keyboardHookId, nCode, wParam, lParam);
         }
 
         #endregion
@@ -282,6 +352,11 @@ namespace AutoKey
         #endregion
 
         #region Key Capture
+
+        private void NumericOnly_PreviewTextInput(object sender, TextCompositionEventArgs e)
+        {
+            e.Handled = !int.TryParse(e.Text, out _);
+        }
 
         private void KeyCaptureBox_KeyCaptured(object sender, RoutedEventArgs e)
         {

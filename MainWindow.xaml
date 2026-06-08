@@ -175,12 +175,14 @@
                                             <TextBox Grid.Column="2"
                                                      Text="{Binding RandomDelay, UpdateSourceTrigger=PropertyChanged}"
                                                      VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
-                                                     Margin="4,0" Height="28" FontSize="13"/>
+                                                     Margin="4,0" Height="28" FontSize="13"
+                                                     PreviewTextInput="NumericOnly_PreviewTextInput"/>
 
                                             <TextBox Grid.Column="3"
                                                      Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}"
                                                      VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
-                                                     Margin="4,0" Height="28" FontSize="13"/>
+                                                     Margin="4,0" Height="28" FontSize="13"
+                                                     PreviewTextInput="NumericOnly_PreviewTextInput"/>
 
                                             <Ellipse Grid.Column="4" Width="14" Height="14"
                                                      HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -272,7 +274,8 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                     <TextBlock Text="随机延迟(±ms):" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
                     <TextBox Text="{Binding GlobalRandomDelay, UpdateSourceTrigger=PropertyChanged}"
                              Width="70" Height="28" FontSize="13"
-                             VerticalContentAlignment="Center" HorizontalContentAlignment="Center"/>
+                             VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
+                             PreviewTextInput="NumericOnly_PreviewTextInput"/>
 
                     <TextBlock VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12" Foreground="#888">
                         <Run Text="状态: "/>
