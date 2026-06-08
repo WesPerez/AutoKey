@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading;
@@ -22,6 +23,11 @@ namespace AutoKey
         public string LoopMode { get; set; } = "循环到手动停止";
         public double WindowWidth { get; set; }
         public double WindowHeight { get; set; }
+    }
+
+    public class AppStateDto
+    {
+        public string SelectedConfig { get; set; } = "默认";
     }
 
     public class KeyConfigDto
@@ -47,6 +53,8 @@ namespace AutoKey
         private CancellationTokenSource? _globalCts;
         private CancellationTokenSource[]? _keyCtsArray;
         private readonly Random _random = new();
+        private bool _stopRequested;
+        private int _runVersion;
 
         public ObservableCollection<KeyConfig> Keys { get; } = new();
         public ObservableCollection<string> ConfigNames { get; } = new() { "默认" };
@@ -77,7 +85,12 @@ namespace AutoKey
         public string LoopMode
         {
             get => _loopMode;
-            set { _loopMode = value; OnPropertyChanged(); }
+            set
+            {
+                string next = string.IsNullOrWhiteSpace(value) ? "循环到手动停止" : value;
+                _loopMode = LoopModes.Contains(next) ? next : "循环到手动停止";
+                OnPropertyChanged();
+            }
         }
 
         public string BoundWindowTitle
@@ -103,7 +116,7 @@ namespace AutoKey
         public string SelectedConfig
         {
             get => _selectedConfig;
-            set { _selectedConfig = value; OnPropertyChanged(); }
+            set { _selectedConfig = SanitizeConfigName(value ?? "默认"); OnPropertyChanged(); }
         }
 
         public string StartButtonText => _isRunning ? "停止" : "开始";
@@ -115,7 +128,7 @@ namespace AutoKey
         {
             for (int i = 0; i < 12; i++)
             {
-                Keys.Add(new KeyConfig { IsEnabled = i < 4, Index = i });
+                Keys.Add(new KeyConfig { IsEnabled = i < 4 });
             }
         }
 
@@ -138,6 +151,8 @@ namespace AutoKey
         public void StartAll()
         {
             if (IsRunning) return;
+            _stopRequested = false;
+            int runVersion = ++_runVersion;
             IsRunning = true;
             StatusText = "运行中...";
             _globalCts = new CancellationTokenSource();
@@ -151,19 +166,21 @@ namespace AutoKey
                     {
                         _keyCtsArray[i] = new CancellationTokenSource();
                         Keys[i].IsRunning = true;
-                        _ = RunKeyLoopAsync(i, _keyCtsArray[i].Token);
+                        _ = RunKeyLoopAsync(i, runVersion, _keyCtsArray[i].Token);
                     }
                 }
             }
             else
             {
-                _ = RunSequentialLoopAsync(_globalCts.Token);
+                _ = RunSequentialLoopAsync(runVersion, _globalCts.Token);
             }
         }
 
         public void StopAll()
         {
             if (!IsRunning) return;
+            _stopRequested = true;
+            _runVersion++;
             _globalCts?.Cancel();
             if (_keyCtsArray != null)
                 foreach (var cts in _keyCtsArray) cts?.Cancel();
@@ -172,7 +189,7 @@ namespace AutoKey
             StatusText = "已停止";
         }
 
-        private async Task RunKeyLoopAsync(int keyIndex, CancellationToken token)
+        private async Task RunKeyLoopAsync(int keyIndex, int runVersion, CancellationToken token)
         {
             var key = Keys[keyIndex];
             int loopCount = GetLoopCount();
@@ -189,13 +206,25 @@ namespace AutoKey
                 }
             }
             catch (TaskCanceledException) { }
+            catch (Exception ex)
+            {
+                Application.Current?.Dispatcher.Invoke(() =>
+                    StatusText = $"运行出错: {ex.Message}");
+            }
             finally
             {
-                Application.Current?.Dispatcher.Invoke(() => key.IsRunning = false);
+                Application.Current?.Dispatcher.Invoke(() =>
+                {
+                    if (runVersion != _runVersion)
+                        return;
+
+                    key.IsRunning = false;
+                    CompleteRunIfNoKeysRunning(runVersion);
+                });
             }
         }
 
-        private async Task RunSequentialLoopAsync(CancellationToken token)
+        private async Task RunSequentialLoopAsync(int runVersion, CancellationToken token)
         {
             int loopCount = GetLoopCount();
             int currentLoop = 0;
@@ -224,11 +253,35 @@ namespace AutoKey
                 }
             }
             catch (TaskCanceledException) { }
+            catch (Exception ex)
+            {
+                Application.Current?.Dispatcher.Invoke(() =>
+                    StatusText = $"运行出错: {ex.Message}");
+            }
             finally
             {
                 Application.Current?.Dispatcher.Invoke(() =>
-                { foreach (var key in Keys) key.IsRunning = false; });
+                {
+                    if (runVersion != _runVersion)
+                        return;
+
+                    foreach (var key in Keys) key.IsRunning = false;
+                    if (IsRunning && !_stopRequested)
+                    {
+                        IsRunning = false;
+                        StatusText = "已完成";
+                    }
+                });
             }
+        }
+
+        private void CompleteRunIfNoKeysRunning(int runVersion)
+        {
+            if (runVersion != _runVersion || !IsRunning || _stopRequested || Keys.Any(k => k.IsRunning))
+                return;
+
+            IsRunning = false;
+            StatusText = "已完成";
         }
 
         private int CalcDelay(KeyConfig key)
@@ -305,6 +358,18 @@ namespace AutoKey
             return dir;
         }
 
+        private string GetAppDirectory()
+        {
+            string dir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "AutoKey");
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+
+        private string GetAppStatePath()
+            => Path.Combine(GetAppDirectory(), "app-state.json");
+
         private static string SanitizeConfigName(string name)
         {
             string sanitized = name.Trim();
@@ -340,6 +405,7 @@ namespace AutoKey
                 }
 
                 string name = SanitizeConfigName(SelectedConfig);
+                SelectedConfig = name;
                 string filePath = Path.Combine(GetConfigDirectory(), $"{name}.json");
                 string json = JsonSerializer.Serialize(dto, JsonOptions);
                 File.WriteAllText(filePath, json);
@@ -355,11 +421,22 @@ namespace AutoKey
         {
             try
             {
+                StopAll();
+
                 string name = SanitizeConfigName(SelectedConfig);
                 string filePath = Path.Combine(GetConfigDirectory(), $"{name}.json");
                 if (!File.Exists(filePath))
                 {
-                    StatusText = $"配置 [{name}] 不存在，使用默认";
+                    if (name != "默认")
+                    {
+                        SelectedConfig = "默认";
+                        LoadConfig();
+                        StatusText = $"配置 [{name}] 不存在，已切换到默认";
+                    }
+                    else
+                    {
+                        StatusText = "默认配置不存在，使用当前设置";
+                    }
                     return;
                 }
 
@@ -383,13 +460,12 @@ namespace AutoKey
                             KeyCode = d.KeyCode,
                             KeyName = d.KeyName,
                             Delay = d.Delay,
-                            RandomDelay = d.RandomDelay,
-                            Index = i
+                            RandomDelay = d.RandomDelay
                         });
                     }
                 }
                 while (Keys.Count < 12)
-                    Keys.Add(new KeyConfig { Index = Keys.Count });
+                    Keys.Add(new KeyConfig());
 
                 IndependentLoop = dto.IndependentLoop;
                 GlobalRandomDelay = dto.GlobalRandomDelay;
@@ -415,17 +491,56 @@ namespace AutoKey
                 foreach (var file in Directory.GetFiles(dir, "*.json"))
                 {
                     string n = Path.GetFileNameWithoutExtension(file);
+                    if (string.IsNullOrWhiteSpace(n))
+                        continue;
                     if (n != "默认" && !ConfigNames.Contains(n))
                         ConfigNames.Add(n);
                 }
             }
-            catch { }
+            catch (Exception ex)
+            {
+                StatusText = $"刷新配置列表出错: {ex.Message}";
+            }
+        }
+
+        public void SaveAppState()
+        {
+            try
+            {
+                var dto = new AppStateDto { SelectedConfig = SanitizeConfigName(SelectedConfig) };
+                string json = JsonSerializer.Serialize(dto, JsonOptions);
+                File.WriteAllText(GetAppStatePath(), json);
+            }
+            catch { /* Best effort; config saving still reports its own errors. */ }
+        }
+
+        public void LoadAppState()
+        {
+            try
+            {
+                string filePath = GetAppStatePath();
+                if (!File.Exists(filePath))
+                {
+                    SelectedConfig = "默认";
+                    return;
+                }
+
+                string json = File.ReadAllText(filePath);
+                var dto = JsonSerializer.Deserialize<AppStateDto>(json, JsonOptions);
+                SelectedConfig = SanitizeConfigName(dto?.SelectedConfig ?? "默认");
+            }
+            catch
+            {
+                SelectedConfig = "默认";
+            }
         }
 
         public void DeleteConfig()
         {
             try
             {
+                StopAll();
+
                 string name = SanitizeConfigName(SelectedConfig);
                 if (name == "默认")
                 {

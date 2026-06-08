@@ -10,32 +10,20 @@ namespace AutoKey
         #region Constants
         public const int WM_KEYDOWN = 0x0100;
         public const int WM_KEYUP = 0x0101;
-        public const int WM_CHAR = 0x0102;
         public const int WM_SYSKEYDOWN = 0x0104;
         public const int WM_SYSKEYUP = 0x0105;
 
-        public const uint SWP_NOZORDER = 0x0004;
-        public const uint SWP_NOACTIVATE = 0x0010;
-        public const int SW_SHOW = 5;
-        public const int SW_RESTORE = 9;
-
-        public const uint WS_VISIBLE = 0x10000000;
-        public const long WS_EX_APPWINDOW = 0x00040000L;
         public const long WS_EX_TOOLWINDOW = 0x00000080L;
 
-        public const int GWL_STYLE = -16;
         public const int GWL_EXSTYLE = -20;
 
         public const int MOD_ALT = 0x0001;
         public const int MOD_CONTROL = 0x0002;
-        public const int MOD_SHIFT = 0x0004;
-        public const int MOD_NOREPEAT = 0x4000;
 
         public const int WM_HOTKEY = 0x0312;
 
         public const int INPUT_KEYBOARD = 1;
         public const ushort KEYEVENTF_KEYUP = 0x0002;
-        public const ushort KEYEVENTF_SCANCODE = 0x0008;
 
         public const int WH_MOUSE_LL = 14;
         public const int WH_KEYBOARD_LL = 13;
@@ -69,15 +57,6 @@ namespace AutoKey
         }
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct RECT
-        {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
         public struct POINT
         {
             public int X;
@@ -99,15 +78,6 @@ namespace AutoKey
         public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
         [DllImport("user32.dll")]
-        public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-        [DllImport("user32.dll")]
-        public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
         [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
@@ -119,20 +89,12 @@ namespace AutoKey
         public static IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex)
             => IntPtr.Size == 8 ? GetWindowLong64(hWnd, nIndex) : GetWindowLong32(hWnd, nIndex);
 
-        [DllImport("user32.dll")]
-        public static extern bool SetForegroundWindow(IntPtr hWnd);
-
         public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
         [DllImport("user32.dll")]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
 
-        [DllImport("user32.dll")]
-        public static extern int GetSystemMetrics(int nIndex);
-
-        public static int GetSystemMetrics_SM_CXSCREEN => 0;
-        public static int GetSystemMetrics_SM_CYSCREEN => 1;
         #endregion
 
         #region Input Functions
@@ -141,9 +103,6 @@ namespace AutoKey
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-        [DllImport("user32.dll")]
-        public static extern short VkKeyScan(char ch);
 
         [DllImport("user32.dll")]
         public static extern uint MapVirtualKey(uint uCode, uint uMapType);
@@ -155,11 +114,6 @@ namespace AutoKey
 
         [DllImport("user32.dll")]
         public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-        #endregion
-
-        #region Process Functions
-        [DllImport("user32.dll")]
-        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
         #endregion
 
         #region Hook Functions
@@ -296,13 +250,6 @@ namespace AutoKey
             return sb.ToString();
         }
 
-        /// <summary>
-        /// Make lParam for PostMessage key events.
-        /// </summary>
-        public static IntPtr MakeLParam(int loWord, int hiWord)
-        {
-            return (IntPtr)((hiWord << 16) | (loWord & 0xFFFF));
-        }
         #endregion
     }
 

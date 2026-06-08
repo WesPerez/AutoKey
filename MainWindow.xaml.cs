@@ -8,6 +8,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using AutoKey.Controls;
 
 namespace AutoKey
@@ -24,7 +25,7 @@ namespace AutoKey
             return Colors.Gray;
         }
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)
-            => throw new NotImplementedException();
+            => Binding.DoNothing;
     }
 
     public partial class MainWindow : Window
@@ -32,12 +33,16 @@ namespace AutoKey
         private MainWindowViewModel ViewModel { get; } = new();
         private IntPtr _windowHandle;
         private HwndSource? _hwndSource;
+        private ImageSource? _stoppedIcon;
+        private ImageSource? _runningIcon;
+        private string _lastValidConfigName = "默认";
+        private bool _refreshingConfigCombo;
 
         private const int HOTKEY_BIND_WINDOW = 2;
 
         // Right-click drag state
         private bool _rightDragging;
-        private IntPtr _rightDragStartWindow;
+        private NativeInterop.POINT _rightDragStartPoint;
 
         // Low-level mouse hook for global right-click detection
         private IntPtr _mouseHookId = IntPtr.Zero;
@@ -54,6 +59,7 @@ namespace AutoKey
             InitializeComponent();
             DataContext = ViewModel;
             KeyList.ItemsSource = ViewModel.Keys;
+            ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         }
 
         private void Window_Loaded(object sender, RoutedEventArgs e)
@@ -73,10 +79,12 @@ namespace AutoKey
                 // Install global keyboard hook for Left Alt hotkey
                 InstallKeyboardHook();
 
-                ViewModel.SelectedConfig = "默认";
-                ViewModel.LoadConfig();
+                ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
+                ViewModel.LoadConfig();
                 KeyList.ItemsSource = ViewModel.Keys;
+                UpdateWindowIcon();
+                RefreshConfigComboText();
 
                 // Restore window size
                 if (ViewModel.WindowWidth >= MinWidth) Width = ViewModel.WindowWidth;
@@ -93,6 +101,8 @@ namespace AutoKey
 
         private void Window_Closing(object? sender, CancelEventArgs e)
         {
+            SyncConfigName();
+            ViewModel.SelectedConfig = _lastValidConfigName;
             ViewModel.StopAll();
 
             // Save window size before auto-saving config
@@ -100,7 +110,8 @@ namespace AutoKey
             ViewModel.WindowHeight = Height;
 
             // Auto-save config on close
-            try { ViewModel.SaveConfig(); } catch { }
+            TryAutoSave(ViewModel.SaveConfig);
+            TryAutoSave(ViewModel.SaveAppState);
 
             if (_windowHandle != IntPtr.Zero)
             {
@@ -110,6 +121,44 @@ namespace AutoKey
             UninstallMouseHook();
             UninstallKeyboardHook();
             _hwndSource?.RemoveHook(WndProc);
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        }
+
+        private static void TryAutoSave(Action saveAction)
+        {
+            try { saveAction(); }
+            catch { /* Avoid blocking shutdown on a best-effort auto-save. */ }
+        }
+
+        private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(MainWindowViewModel.IsRunning))
+                Dispatcher.BeginInvoke(new Action(UpdateWindowIcon));
+        }
+
+        private void UpdateWindowIcon()
+        {
+            _stoppedIcon ??= CreateStatusIcon(Color.FromRgb(211, 47, 47));
+            _runningIcon ??= CreateStatusIcon(Colors.LimeGreen);
+            Icon = ViewModel.IsRunning ? _runningIcon : _stoppedIcon;
+        }
+
+        private static ImageSource CreateStatusIcon(Color accent)
+        {
+            const int size = 32;
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+            {
+                dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(34, 34, 34)), null,
+                    new Rect(2, 2, 28, 28), 6, 6);
+                dc.DrawEllipse(new SolidColorBrush(accent), null, new Point(16, 16), 8, 8);
+                dc.DrawEllipse(null, new Pen(Brushes.White, 2), new Point(16, 16), 8, 8);
+            }
+
+            var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(visual);
+            bitmap.Freeze();
+            return bitmap;
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -157,10 +206,7 @@ namespace AutoKey
                 {
                     // Right button pressed - start drag tracking
                     _rightDragging = true;
-                    if (NativeInterop.GetCursorPos(out NativeInterop.POINT pt))
-                    {
-                        _rightDragStartWindow = NativeInterop.WindowFromPoint(pt);
-                    }
+                    NativeInterop.GetCursorPos(out _rightDragStartPoint);
                 }
                 else if (msg == NativeInterop.WM_RBUTTONUP && _rightDragging)
                 {
@@ -168,6 +214,11 @@ namespace AutoKey
                     // Right button released - bind to window under cursor
                     if (NativeInterop.GetCursorPos(out NativeInterop.POINT pt))
                     {
+                        int dx = pt.X - _rightDragStartPoint.X;
+                        int dy = pt.Y - _rightDragStartPoint.Y;
+                        if ((dx * dx) + (dy * dy) < 64)
+                            return NativeInterop.CallNextHookEx(_mouseHookId, nCode, wParam, lParam);
+
                         IntPtr hWnd = NativeInterop.WindowFromPoint(pt);
                         if (hWnd != IntPtr.Zero && hWnd != _windowHandle)
                         {
@@ -306,6 +357,7 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.SaveConfig();
             ViewModel.RefreshConfigList();
+            RefreshConfigComboText();
         }
 
         private void BtnLoadConfig_Click(object sender, RoutedEventArgs e)
@@ -313,6 +365,7 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.LoadConfig();
             KeyList.ItemsSource = ViewModel.Keys;
+            RefreshConfigComboText();
         }
 
         private void BtnDeleteConfig_Click(object sender, RoutedEventArgs e)
@@ -320,15 +373,56 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.DeleteConfig();
             ViewModel.RefreshConfigList();
+            RefreshConfigComboText();
         }
 
         private void CmbConfig_LostFocus(object sender, RoutedEventArgs e) => SyncConfigName();
 
+        private void CmbConfig_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_refreshingConfigCombo)
+                return;
+
+            if (cmbConfig.SelectedItem is string name && !string.IsNullOrWhiteSpace(name))
+            {
+                ViewModel.SelectedConfig = name;
+                _lastValidConfigName = name;
+                RefreshConfigComboText();
+                ViewModel.SaveAppState();
+            }
+        }
+
         private void SyncConfigName()
         {
-            string text = cmbConfig.Text?.Trim() ?? "";
+            string text = (cmbConfig.Text ?? cmbConfig.SelectedItem as string ?? "").Trim();
+            if (string.IsNullOrEmpty(text))
+                text = _lastValidConfigName;
+
             if (!string.IsNullOrEmpty(text))
+            {
                 ViewModel.SelectedConfig = text;
+                _lastValidConfigName = text;
+                ViewModel.SaveAppState();
+            }
+        }
+
+        private void RefreshConfigComboText()
+        {
+            _refreshingConfigCombo = true;
+            try
+            {
+                _lastValidConfigName = string.IsNullOrWhiteSpace(ViewModel.SelectedConfig)
+                    ? "默认"
+                    : ViewModel.SelectedConfig;
+                cmbConfig.SelectedItem = ViewModel.ConfigNames.Contains(_lastValidConfigName)
+                    ? _lastValidConfigName
+                    : null;
+                cmbConfig.Text = _lastValidConfigName;
+            }
+            finally
+            {
+                _refreshingConfigCombo = false;
+            }
         }
 
         #endregion
@@ -356,6 +450,25 @@ namespace AutoKey
         private void NumericOnly_PreviewTextInput(object sender, TextCompositionEventArgs e)
         {
             e.Handled = !int.TryParse(e.Text, out _);
+        }
+
+        private void NumericOnly_Pasting(object sender, DataObjectPastingEventArgs e)
+        {
+            if (!e.DataObject.GetDataPresent(DataFormats.Text))
+            {
+                e.CancelCommand();
+                return;
+            }
+
+            string text = e.DataObject.GetData(DataFormats.Text)?.ToString() ?? "";
+            if (!int.TryParse(text, out _))
+                e.CancelCommand();
+        }
+
+        private void NumericTextBox_LostFocus(object sender, RoutedEventArgs e)
+        {
+            if (sender is TextBox textBox && !int.TryParse(textBox.Text, out _))
+                textBox.Text = "0";
         }
 
         private void KeyCaptureBox_KeyCaptured(object sender, RoutedEventArgs e)

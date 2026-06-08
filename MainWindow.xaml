@@ -176,13 +176,17 @@
                                                      Text="{Binding RandomDelay, UpdateSourceTrigger=PropertyChanged}"
                                                      VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
                                                      Margin="4,0" Height="28" FontSize="13"
-                                                     PreviewTextInput="NumericOnly_PreviewTextInput"/>
+                                                     PreviewTextInput="NumericOnly_PreviewTextInput"
+                                                     DataObject.Pasting="NumericOnly_Pasting"
+                                                     LostFocus="NumericTextBox_LostFocus"/>
 
                                             <TextBox Grid.Column="3"
                                                      Text="{Binding Delay, UpdateSourceTrigger=PropertyChanged}"
                                                      VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
                                                      Margin="4,0" Height="28" FontSize="13"
-                                                     PreviewTextInput="NumericOnly_PreviewTextInput"/>
+                                                     PreviewTextInput="NumericOnly_PreviewTextInput"
+                                                     DataObject.Pasting="NumericOnly_Pasting"
+                                                     LostFocus="NumericTextBox_LostFocus"/>
 
                                             <Ellipse Grid.Column="4" Width="14" Height="14"
                                                      HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -275,7 +279,9 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                     <TextBox Text="{Binding GlobalRandomDelay, UpdateSourceTrigger=PropertyChanged}"
                              Width="70" Height="28" FontSize="13"
                              VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
-                             PreviewTextInput="NumericOnly_PreviewTextInput"/>
+                             PreviewTextInput="NumericOnly_PreviewTextInput"
+                             DataObject.Pasting="NumericOnly_Pasting"
+                             LostFocus="NumericTextBox_LostFocus"/>
 
                     <TextBlock VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12" Foreground="#888">
                         <Run Text="状态: "/>
@@ -287,9 +293,9 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                     <TextBlock Text="配置:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="13"/>
                     <ComboBox x:Name="cmbConfig" Width="100" Height="28" FontSize="13"
                               IsEditable="True"
-                              ItemsSource="{Binding ConfigNames}" SelectedItem="{Binding SelectedConfig}"
-                              Text="配置名"
+                              ItemsSource="{Binding ConfigNames}"
                               VerticalContentAlignment="Center"
+                              SelectionChanged="CmbConfig_SelectionChanged"
                               LostFocus="CmbConfig_LostFocus"/>
                     <Button Content="保存配置" Style="{StaticResource ActionButton}" Margin="6,0,0,0"
                             Click="BtnSaveConfig_Click"/>

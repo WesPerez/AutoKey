@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.CompilerServices;
-using System.Text.Json.Serialization;
 using System.Windows.Input;
 
 namespace AutoKey
@@ -15,70 +14,48 @@ namespace AutoKey
         private int _randomDelay = 100;
         private bool _isRunning;
 
-        [JsonPropertyName("isEnabled")]
         public bool IsEnabled
         {
             get => _isEnabled;
             set { _isEnabled = value; OnPropertyChanged(); }
         }
 
-        [JsonPropertyName("keyCode")]
         public int KeyCode
         {
             get => _keyCode;
             set { _keyCode = value; OnPropertyChanged(); }
         }
 
-        [JsonPropertyName("keyName")]
         public string KeyName
         {
             get => _keyName;
-            set { _keyName = value; OnPropertyChanged(); OnPropertyChanged(nameof(DisplayKey)); }
+            set { _keyName = value; OnPropertyChanged(); }
         }
 
-        [JsonPropertyName("delay")]
         public int Delay
         {
             get => _delay;
-            set { _delay = Math.Max(50, value); OnPropertyChanged(); }
+            set { _delay = Math.Max(0, value); OnPropertyChanged(); }
         }
 
-        [JsonPropertyName("randomDelay")]
         public int RandomDelay
         {
             get => _randomDelay;
             set { _randomDelay = Math.Max(0, value); OnPropertyChanged(); }
         }
 
-        [JsonIgnore]
         public bool IsRunning
         {
             get => _isRunning;
             set { _isRunning = value; OnPropertyChanged(); OnPropertyChanged(nameof(StatusColor)); }
         }
 
-        [JsonIgnore]
-        public string DisplayKey => string.IsNullOrEmpty(_keyName) ? "未设置" : _keyName;
-
-        [JsonIgnore]
         public string StatusColor => _isRunning ? "#4CAF50" : "#999999";
-
-        [JsonIgnore]
-        public int Index { get; set; }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)
         {
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-        }
-
-        /// <summary>
-        /// Convert WPF Key enum to virtual key code and display name.
-        /// </summary>
-        public void SetFromWpfKey(Key key)
-        {
-            KeyCode = KeyInterop.VirtualKeyFromKey(key);
-            KeyName = GetKeyDisplayName(key);
         }
 
         public static string GetKeyDisplayName(Key key)
