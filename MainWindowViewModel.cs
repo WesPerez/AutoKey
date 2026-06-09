@@ -23,6 +23,7 @@ namespace AutoKey
         public string LoopMode { get; set; } = "循环到手动停止";
         public double WindowWidth { get; set; }
         public double WindowHeight { get; set; }
+        public int AntiPatternLevel { get; set; } = 2;
     }
 
     public class AppStateDto
@@ -52,9 +53,9 @@ namespace AutoKey
 
         private CancellationTokenSource? _globalCts;
         private CancellationTokenSource[]? _keyCtsArray;
-        private readonly Random _random = new();
         private bool _stopRequested;
         private int _runVersion;
+        private int _antiPatternLevel = 2;
 
         public ObservableCollection<KeyConfig> Keys { get; } = new();
         public ObservableCollection<string> ConfigNames { get; } = new() { "默认" };
@@ -120,6 +121,17 @@ namespace AutoKey
         }
 
         public string StartButtonText => _isRunning ? "停止" : "开始";
+
+        public int AntiPatternLevel
+        {
+            get => _antiPatternLevel;
+            set
+            {
+                _antiPatternLevel = Math.Clamp(value, 0, 2);
+                Humanizer.AntiPatternLevel = _antiPatternLevel;
+                OnPropertyChanged();
+            }
+        }
 
         public double WindowWidth { get; set; }
         public double WindowHeight { get; set; }
@@ -286,12 +298,8 @@ namespace AutoKey
 
         private int CalcDelay(KeyConfig key)
         {
-            int delay = key.Delay;
-            if (key.RandomDelay > 0)
-                delay += _random.Next(-key.RandomDelay, key.RandomDelay + 1);
-            if (GlobalRandomDelay > 0)
-                delay += _random.Next(-GlobalRandomDelay, GlobalRandomDelay + 1);
-            return Math.Max(50, delay);
+            int combinedRange = key.RandomDelay + GlobalRandomDelay;
+            return Humanizer.NextDelay(key.Delay, combinedRange);
         }
 
         private async Task SendKeyAsync(KeyConfig key)
@@ -390,7 +398,8 @@ namespace AutoKey
                     GlobalRandomDelay = GlobalRandomDelay,
                     LoopMode = LoopMode,
                     WindowWidth = WindowWidth,
-                    WindowHeight = WindowHeight
+                    WindowHeight = WindowHeight,
+                    AntiPatternLevel = AntiPatternLevel
                 };
                 foreach (var k in Keys)
                 {
@@ -472,6 +481,7 @@ namespace AutoKey
                 LoopMode = dto.LoopMode;
                 WindowWidth = dto.WindowWidth;
                 WindowHeight = dto.WindowHeight;
+                AntiPatternLevel = dto.AntiPatternLevel;
 
                 StatusText = $"配置 [{name}] 已加载";
             }

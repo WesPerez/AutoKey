@@ -155,6 +155,7 @@ namespace AutoKey
         #region Helper Methods
         /// <summary>
         /// Send a key press to a specific window handle using PostMessage (background).
+        /// Uses randomized press duration and extra info to mimic human typing.
         /// </summary>
         public static async Task SendKeyToWindowAsync(IntPtr hWnd, int vkCode)
         {
@@ -166,16 +167,25 @@ namespace AutoKey
 
             int lParamUp = lParamDown | (1 << 30) | (1 << 31);
 
+            int pressDuration = Humanizer.NextPressDuration();
+            int extraInfo = Humanizer.NextExtraInfo().ToInt32();
+
+            lParamDown |= (extraInfo & 0x0F) << 28;
+            lParamUp |= (extraInfo & 0x0F) << 28;
+
             PostMessage(hWnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)lParamDown);
-            await Task.Delay(15);
+            await Task.Delay(pressDuration);
             PostMessage(hWnd, WM_KEYUP, (IntPtr)vkCode, (IntPtr)lParamUp);
         }
 
         /// <summary>
         /// Send a key press to the foreground using SendInput.
+        /// Uses randomized press duration and extra info to mimic human typing.
         /// </summary>
         public static void SendKeyForeground(int vkCode)
         {
+            int extraInfo = Humanizer.NextExtraInfo().ToInt32();
+
             INPUT[] inputs = new INPUT[2];
             inputs[0].type = INPUT_KEYBOARD;
             inputs[0].u.ki = new KEYBDINPUT
@@ -184,7 +194,7 @@ namespace AutoKey
                 wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
                 dwFlags = 0,
                 time = 0,
-                dwExtraInfo = IntPtr.Zero
+                dwExtraInfo = (IntPtr)extraInfo
             };
 
             inputs[1].type = INPUT_KEYBOARD;
@@ -194,7 +204,7 @@ namespace AutoKey
                 wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
                 dwFlags = KEYEVENTF_KEYUP,
                 time = 0,
-                dwExtraInfo = IntPtr.Zero
+                dwExtraInfo = (IntPtr)extraInfo
             };
 
             SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));

@@ -10,6 +10,7 @@
         MinHeight="600" MinWidth="780"
         Background="#F0F0F0"
         Loaded="Window_Loaded"
+        StateChanged="Window_StateChanged"
         Closing="Window_Closing">
 
     <Window.Resources>
@@ -251,6 +252,10 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
 <LineBreak/><LineBreak/>
 <Run Foreground="#C62828" FontWeight="Bold">提示: </Run>
 <Run Foreground="#555">后台发送按键使用 PostMessage 方式。部分应用可能需要前台模式。</Run>
+<LineBreak/><LineBreak/>
+<Run Foreground="#1565C0" FontWeight="Bold">7. 防检测</Run>
+<LineBreak/>
+<Run Foreground="#555">关闭: 固定延迟+固定按键时长。基础: 高斯分布延迟+随机按键时长+防重复。增强: 基础+偶发微停顿(8%概率)。</Run>
                         </TextBlock>
                     </ScrollViewer>
                 </Grid>
@@ -282,6 +287,15 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                              PreviewTextInput="NumericOnly_PreviewTextInput"
                              DataObject.Pasting="NumericOnly_Pasting"
                              LostFocus="NumericTextBox_LostFocus"/>
+
+                    <TextBlock Text="防检测:" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
+                    <ComboBox Width="100" Height="28" FontSize="13"
+                              VerticalContentAlignment="Center"
+                              SelectedIndex="{Binding AntiPatternLevel}">
+                        <ComboBoxItem Content="关闭"/>
+                        <ComboBoxItem Content="基础"/>
+                        <ComboBoxItem Content="增强"/>
+                    </ComboBox>
 
                     <TextBlock VerticalAlignment="Center" Margin="16,0,0,0" FontSize="12" Foreground="#888">
                         <Run Text="状态: "/>

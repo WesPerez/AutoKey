@@ -10,6 +10,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AutoKey.Controls;
+using Forms = System.Windows.Forms;
 
 namespace AutoKey
 {
@@ -54,6 +55,10 @@ namespace AutoKey
         private bool _leftAltDown;
         private bool _leftAltSolo;
 
+        // Tray icon for minimize-to-tray
+        private Forms.NotifyIcon? _trayIcon;
+        private bool _isReallyClosing;
+
         public MainWindow()
         {
             InitializeComponent();
@@ -79,6 +84,9 @@ namespace AutoKey
                 // Install global keyboard hook for Left Alt hotkey
                 InstallKeyboardHook();
 
+                // Create system tray icon
+                SetupTrayIcon();
+
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
                 ViewModel.LoadConfig();
@@ -101,6 +109,13 @@ namespace AutoKey
 
         private void Window_Closing(object? sender, CancelEventArgs e)
         {
+            if (!_isReallyClosing)
+            {
+                e.Cancel = true;
+                Hide();
+                return;
+            }
+
             SyncConfigName();
             ViewModel.SelectedConfig = _lastValidConfigName;
             ViewModel.StopAll();
@@ -122,7 +137,64 @@ namespace AutoKey
             UninstallKeyboardHook();
             _hwndSource?.RemoveHook(WndProc);
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+
+            _trayIcon?.Dispose();
         }
+
+        #region Tray Icon
+
+        private void SetupTrayIcon()
+        {
+            _trayIcon = new Forms.NotifyIcon
+            {
+                Icon = System.Drawing.Icon.ExtractAssociatedIcon(
+                    System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "")
+                      ?? System.Drawing.SystemIcons.Application,
+                Text = "后台按键工具",
+                Visible = true
+            };
+
+            _trayIcon.DoubleClick += (s, e) =>
+            {
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+            };
+
+            var menu = new Forms.ContextMenuStrip();
+            menu.Items.Add("显示", null, (s, e) =>
+            {
+                Show();
+                WindowState = WindowState.Normal;
+                Activate();
+            });
+            menu.Items.Add(new Forms.ToolStripSeparator());
+            menu.Items.Add("退出", null, (s, e) =>
+            {
+                _isReallyClosing = true;
+                _trayIcon.Visible = false;
+                Close();
+            });
+
+            _trayIcon.ContextMenuStrip = menu;
+        }
+
+        private void Window_StateChanged(object? sender, EventArgs e)
+        {
+            if (WindowState == WindowState.Minimized)
+            {
+                Dispatcher.BeginInvoke(new Action(Hide));
+            }
+        }
+
+        private void PerformRealClose()
+        {
+            _isReallyClosing = true;
+            _trayIcon!.Visible = false;
+            Close();
+        }
+
+        #endregion
 
         private static void TryAutoSave(Action saveAction)
         {
