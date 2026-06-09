@@ -1,7 +1,6 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +9,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using AutoKey.Controls;
 using Forms = System.Windows.Forms;
 using Microsoft.Win32;
@@ -36,8 +36,6 @@ namespace AutoKey
         private MainWindowViewModel ViewModel { get; } = new();
         private IntPtr _windowHandle;
         private HwndSource? _hwndSource;
-        private ImageSource? _stoppedIcon;
-        private ImageSource? _runningIcon;
         private System.Drawing.Icon? _stoppedTrayIcon;
         private System.Drawing.Icon? _runningTrayIcon;
         private string _lastValidConfigName = "默认";
@@ -93,6 +91,9 @@ namespace AutoKey
 
                 // Create system tray icon
                 SetupTrayIcon();
+
+                // Initialize taskbar overlay (needed for pinned taskbar icon)
+                TaskbarItemInfo = new TaskbarItemInfo();
 
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
@@ -232,13 +233,6 @@ namespace AutoKey
             }
         }
 
-        private void PerformRealClose()
-        {
-            _isReallyClosing = true;
-            _trayIcon!.Visible = false;
-            Close();
-        }
-
         #endregion
 
         private static void TryAutoSave(Action saveAction)
@@ -255,35 +249,28 @@ namespace AutoKey
 
         private void UpdateWindowIcon()
         {
-            _stoppedIcon ??= CreateStatusIcon(Color.FromRgb(211, 47, 47));
-            _runningIcon ??= CreateStatusIcon(Colors.LimeGreen);
-            Icon = ViewModel.IsRunning ? _runningIcon : _stoppedIcon;
+            _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
+            _runningTrayIcon ??= CreateTrayStatusIcon(true);
 
-            // Update tray icon color
+            var icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
+
+            // Update tray icon
             if (_trayIcon != null)
-            {
-                _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
-                _runningTrayIcon ??= CreateTrayStatusIcon(true);
-                _trayIcon.Icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
-            }
-        }
+                _trayIcon.Icon = icon;
 
-        private static ImageSource CreateStatusIcon(Color accent)
-        {
-            const int size = 32;
-            var visual = new DrawingVisual();
-            using (var dc = visual.RenderOpen())
+            // Force taskbar icon update via WM_SETICON
+            if (_windowHandle != IntPtr.Zero)
             {
-                dc.DrawRoundedRectangle(new SolidColorBrush(Color.FromRgb(34, 34, 34)), null,
-                    new Rect(2, 2, 28, 28), 6, 6);
-                dc.DrawEllipse(new SolidColorBrush(accent), null, new Point(16, 16), 8, 8);
-                dc.DrawEllipse(null, new Pen(Brushes.White, 2), new Point(16, 16), 8, 8);
+                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)0 /*ICON_SMALL*/, icon.Handle);
+                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)1 /*ICON_BIG*/, icon.Handle);
             }
 
-            var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render(visual);
-            bitmap.Freeze();
-            return bitmap;
+            // Taskbar overlay: the only reliable indicator when pinned to taskbar
+            if (TaskbarItemInfo != null)
+            {
+                var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+                TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor);
+            }
         }
 
         private static System.Drawing.Icon CreateTrayStatusIcon(bool isRunning)
@@ -323,7 +310,19 @@ namespace AutoKey
             return System.Drawing.Icon.FromHandle(hIcon);
         }
 
-
+        private static ImageSource CreateOverlayIcon(Color accent)
+        {
+            const int size = 16;
+            var visual = new DrawingVisual();
+            using (var dc = visual.RenderOpen())
+            {
+                dc.DrawEllipse(new SolidColorBrush(accent), null, new Point(8, 8), 7, 7);
+            }
+            var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            bitmap.Render(visual);
+            bitmap.Freeze();
+            return bitmap;
+        }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {

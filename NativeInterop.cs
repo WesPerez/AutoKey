@@ -17,12 +17,11 @@ namespace AutoKey
 
         public const int GWL_EXSTYLE = -20;
 
-        public static readonly IntPtr HWND_BROADCAST = (IntPtr)0xFFFF;
-
         public const int MOD_ALT = 0x0001;
         public const int MOD_CONTROL = 0x0002;
 
         public const int WM_HOTKEY = 0x0312;
+        public const int WM_SETICON = 0x0080;
         public const uint WM_AUTOKEY_RESTORE = 0x8020;
 
         public const int INPUT_KEYBOARD = 1;
