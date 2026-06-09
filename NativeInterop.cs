@@ -17,10 +17,13 @@ namespace AutoKey
 
         public const int GWL_EXSTYLE = -20;
 
+        public static readonly IntPtr HWND_BROADCAST = (IntPtr)0xFFFF;
+
         public const int MOD_ALT = 0x0001;
         public const int MOD_CONTROL = 0x0002;
 
         public const int WM_HOTKEY = 0x0312;
+        public const uint WM_AUTOKEY_RESTORE = 0x8020;
 
         public const int INPUT_KEYBOARD = 1;
         public const ushort KEYEVENTF_KEYUP = 0x0002;
@@ -80,6 +83,9 @@ namespace AutoKey
         [DllImport("user32.dll")]
         public static extern bool IsWindowVisible(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
         [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
         public static extern IntPtr GetWindowLong32(IntPtr hWnd, int nIndex);
 
@@ -99,7 +105,13 @@ namespace AutoKey
 
         #region Input Functions
         [DllImport("user32.dll")]
+        public static extern bool AllowSetForegroundWindow(int dwProcessId);
+
+        [DllImport("user32.dll")]
         public static extern IntPtr PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);

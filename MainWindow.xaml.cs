@@ -75,6 +75,9 @@ namespace AutoKey
                 _hwndSource = HwndSource.FromHwnd(_windowHandle);
                 _hwndSource?.AddHook(WndProc);
 
+                // Publish window handle for single-instance activation
+                App.PublishWindowHandle(_windowHandle);
+
                 NativeInterop.RegisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW,
                     NativeInterop.MOD_CONTROL | NativeInterop.MOD_ALT, 0x20);
 
@@ -243,6 +246,16 @@ namespace AutoKey
                     BindWindowUnderCursor();
                     handled = true;
                 }
+            }
+            else if (msg == (int)NativeInterop.WM_AUTOKEY_RESTORE)
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    Show();
+                    WindowState = WindowState.Normal;
+                    NativeInterop.SetForegroundWindow(_windowHandle);
+                }));
+                handled = true;
             }
             return IntPtr.Zero;
         }
