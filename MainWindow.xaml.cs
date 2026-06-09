@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -11,6 +12,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using AutoKey.Controls;
 using Forms = System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace AutoKey
 {
@@ -36,6 +38,8 @@ namespace AutoKey
         private HwndSource? _hwndSource;
         private ImageSource? _stoppedIcon;
         private ImageSource? _runningIcon;
+        private System.Drawing.Icon? _stoppedTrayIcon;
+        private System.Drawing.Icon? _runningTrayIcon;
         private string _lastValidConfigName = "默认";
         private bool _refreshingConfigCombo;
 
@@ -146,6 +150,33 @@ namespace AutoKey
 
         #region Tray Icon
 
+        private const string AutoStartRegKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        private const string AutoStartValueName = "AutoKey";
+
+        private static bool IsAutoStartEnabled
+        {
+            get
+            {
+                using var key = Registry.CurrentUser.OpenSubKey(AutoStartRegKey, false);
+                return key?.GetValue(AutoStartValueName) != null;
+            }
+        }
+
+        private static void SetAutoStart(bool enable)
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(AutoStartRegKey, true);
+            if (key == null) return;
+            if (enable)
+            {
+                var exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "";
+                key.SetValue(AutoStartValueName, $"\"{exePath}\"");
+            }
+            else
+            {
+                key.DeleteValue(AutoStartValueName, false);
+            }
+        }
+
         private void SetupTrayIcon()
         {
             _trayIcon = new Forms.NotifyIcon
@@ -171,6 +202,17 @@ namespace AutoKey
                 WindowState = WindowState.Normal;
                 Activate();
             });
+
+            var autoStartItem = new Forms.ToolStripMenuItem("开机自启");
+            autoStartItem.Checked = IsAutoStartEnabled;
+            autoStartItem.Click += (s, e) =>
+            {
+                bool newState = !autoStartItem.Checked;
+                SetAutoStart(newState);
+                autoStartItem.Checked = newState;
+            };
+            menu.Items.Add(autoStartItem);
+
             menu.Items.Add(new Forms.ToolStripSeparator());
             menu.Items.Add("退出", null, (s, e) =>
             {
@@ -216,6 +258,14 @@ namespace AutoKey
             _stoppedIcon ??= CreateStatusIcon(Color.FromRgb(211, 47, 47));
             _runningIcon ??= CreateStatusIcon(Colors.LimeGreen);
             Icon = ViewModel.IsRunning ? _runningIcon : _stoppedIcon;
+
+            // Update tray icon color
+            if (_trayIcon != null)
+            {
+                _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
+                _runningTrayIcon ??= CreateTrayStatusIcon(true);
+                _trayIcon.Icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
+            }
         }
 
         private static ImageSource CreateStatusIcon(Color accent)
@@ -235,6 +285,45 @@ namespace AutoKey
             bitmap.Freeze();
             return bitmap;
         }
+
+        private static System.Drawing.Icon CreateTrayStatusIcon(bool isRunning)
+        {
+            const int size = 32;
+            using var bmp = new System.Drawing.Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+            using (var g = System.Drawing.Graphics.FromImage(bmp))
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(System.Drawing.Color.Transparent);
+
+                // Dark background with rounded corners
+                using var bgBrush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(34, 34, 34));
+                var rect = new System.Drawing.Rectangle(2, 2, 28, 28);
+                int d = 12; // diameter for corner arcs
+                using var path = new System.Drawing.Drawing2D.GraphicsPath();
+                path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+                path.AddArc(rect.X + rect.Width - d, rect.Y, d, d, 270, 90);
+                path.AddArc(rect.X + rect.Width - d, rect.Y + rect.Height - d, d, d, 0, 90);
+                path.AddArc(rect.X, rect.Y + rect.Height - d, d, d, 90, 90);
+                path.CloseFigure();
+                g.FillPath(bgBrush, path);
+
+                // Colored circle
+                var accent = isRunning
+                    ? System.Drawing.Color.LimeGreen
+                    : System.Drawing.Color.FromArgb(211, 47, 47);
+                using var circleBrush = new System.Drawing.SolidBrush(accent);
+                g.FillEllipse(circleBrush, 8, 8, 16, 16);
+
+                // White border
+                using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2);
+                g.DrawEllipse(pen, 8, 8, 16, 16);
+            }
+
+            IntPtr hIcon = bmp.GetHicon();
+            return System.Drawing.Icon.FromHandle(hIcon);
+        }
+
+
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
         {
