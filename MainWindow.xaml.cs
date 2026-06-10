@@ -104,6 +104,9 @@ namespace AutoKey
                 // Taskbar overlay for pinned icon badge
                 TaskbarItemInfo = new TaskbarItemInfo();
 
+                // Push high-res icon to Windows for crisp taskbar rendering
+                SetHighResWindowIcon();
+
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
                 ViewModel.LoadConfig();
@@ -300,9 +303,12 @@ namespace AutoKey
 
                 if (TaskbarItemInfo != null)
                 {
-                    var accent = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
-                    TaskbarItemInfo.Overlay = CreateBadgeOverlay(accent, ViewModel.SelectedConfig);
-                }
+                var accent = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+                TaskbarItemInfo.Overlay = CreateBadgeOverlay(accent, ViewModel.SelectedConfig);
+
+                // Refresh high-res icon when state changes
+                SetHighResWindowIcon();
+            }
             }
             catch (Exception ex)
             {
@@ -458,6 +464,28 @@ namespace AutoKey
             catch (Exception recreateEx)
             {
                 App.LogError("RecreateTrayIcon", recreateEx);
+            }
+        }
+
+        private void SetHighResWindowIcon()
+        {
+            if (_windowHandle == IntPtr.Zero)
+                return;
+
+            try
+            {
+                using var icon = System.Drawing.Icon.ExtractAssociatedIcon(
+                    Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "");
+                if (icon == null)
+                    return;
+
+                // ICON_BIG (1) = large icon for taskbar/alt-tab
+                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON,
+                    (IntPtr)1, icon.Handle);
+            }
+            catch (Exception ex)
+            {
+                App.LogError("SetHighResWindowIcon", ex);
             }
         }
 
@@ -1050,6 +1078,7 @@ namespace AutoKey
 
     #endregion
 }
+
 
 
 
