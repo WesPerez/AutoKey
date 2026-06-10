@@ -57,8 +57,10 @@ namespace AutoKey
         private NativeInterop.LowLevelKeyboardProc? _keyboardProc;
         private bool _leftAltDown;
         private bool _leftAltSolo;
-        private readonly HashSet<int> _pressedVirtualKeys = new();
-        private bool _hotkeyHandledUntilRelease;
+
+        // Registered system hotkeys for config switching
+        private const int HOTKEY_CONFIG_BASE = 1000;
+        private readonly Dictionary<int, string?> _registeredConfigHotkeys = new();
 
         // Tray icon for minimize-to-tray
         private Forms.NotifyIcon? _trayIcon;
@@ -83,8 +85,12 @@ namespace AutoKey
                 // Publish window handle for single-instance activation
                 App.PublishWindowHandle(_windowHandle);
 
-                NativeInterop.RegisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW,
-                    NativeInterop.MOD_CONTROL | NativeInterop.MOD_ALT, 0x20);
+                if (!NativeInterop.RegisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW,
+                    NativeInterop.MOD_CONTROL | NativeInterop.MOD_ALT | NativeInterop.MOD_NOREPEAT, 0x20))
+                {
+                    App.LogError("RegisterHotKey[BindWindow]",
+                        new Win32Exception(Marshal.GetLastWin32Error()));
+                }
 
                 // Install global mouse hook for right-click drag binding
                 InstallMouseHook();
@@ -102,6 +108,7 @@ namespace AutoKey
                 ViewModel.RefreshConfigList();
                 ViewModel.LoadConfig();
                 KeyList.ItemsSource = ViewModel.Keys;
+                RefreshRegisteredConfigHotkeys();
                 UpdateWindowIcon();
                 RefreshConfigComboText();
 
@@ -122,37 +129,27 @@ namespace AutoKey
         {
             if (!_isReallyClosing)
             {
+                SaveCurrentState();
                 e.Cancel = true;
                 Hide();
                 return;
             }
 
-            SyncConfigName();
-            ViewModel.SelectedConfig = _lastValidConfigName;
+            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            SaveCurrentState();
             ViewModel.StopAll();
-
-            // Save window size before auto-saving config
-            ViewModel.WindowWidth = Width;
-            ViewModel.WindowHeight = Height;
-
-            // Auto-save config on close
-            TryAutoSave(ViewModel.SaveConfig);
-            TryAutoSave(ViewModel.SaveAppState);
 
             if (_windowHandle != IntPtr.Zero)
             {
                 NativeInterop.UnregisterHotKey(_windowHandle, HOTKEY_BIND_WINDOW);
             }
+            UnregisterConfigHotkeys();
 
             UninstallMouseHook();
             UninstallKeyboardHook();
             _hwndSource?.RemoveHook(WndProc);
-            ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
 
-            _trayIcon?.Dispose();
-            foreach (var icon in _trayIconCache.Values)
-                icon.Dispose();
-            _trayIconCache.Clear();
+            DisposeTrayResources();
         }
 
         #region Tray Icon
@@ -224,7 +221,8 @@ namespace AutoKey
             menu.Items.Add("退出", null, (s, e) =>
             {
                 _isReallyClosing = true;
-                _trayIcon.Visible = false;
+                if (_trayIcon != null)
+                    _trayIcon.Visible = false;
                 Close();
             });
 
@@ -247,25 +245,59 @@ namespace AutoKey
             catch { /* Avoid blocking shutdown on a best-effort auto-save. */ }
         }
 
+        private void SaveCurrentState()
+        {
+            SyncConfigName();
+            ViewModel.SelectedConfig = _lastValidConfigName;
+            ViewModel.WindowWidth = Width;
+            ViewModel.WindowHeight = Height;
+            TryAutoSave(ViewModel.SaveConfig);
+            TryAutoSave(ViewModel.SaveAppState);
+        }
+
+        private void DisposeTrayResources()
+        {
+            try
+            {
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Visible = false;
+                    _trayIcon.Dispose();
+                    _trayIcon = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                App.LogError("DisposeTrayIcon", ex);
+            }
+
+            foreach (var icon in _trayIconCache.Values)
+                icon.Dispose();
+            _trayIconCache.Clear();
+        }
+
         private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
             if (e.PropertyName == nameof(MainWindowViewModel.IsRunning) ||
                 e.PropertyName == nameof(MainWindowViewModel.SelectedConfig))
                 Dispatcher.BeginInvoke(new Action(UpdateWindowIcon));
+
+            if (e.PropertyName == nameof(MainWindowViewModel.CycleConfigHotkey) ||
+                e.PropertyName == nameof(MainWindowViewModel.SelectedConfigHotkey))
+                Dispatcher.BeginInvoke(new Action(RefreshRegisteredConfigHotkeys));
         }
 
         private void UpdateWindowIcon()
         {
+            if (_isReallyClosing)
+                return;
+
             try
             {
+                Title = BuildWindowTitle();
                 var icon = GetTrayStatusIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
 
-                // Update tray icon
-                if (_trayIcon != null)
-                {
-                    _trayIcon.Icon = icon;
-                    _trayIcon.Text = BuildTrayTooltip();
-                }
+                UpdateTrayIconSafe(icon);
 
                 // Keep the taskbar base icon as app.ico for pinned/unpinned consistency.
                 // Use overlay for runtime state and config badge.
@@ -329,7 +361,15 @@ namespace AutoKey
             }
 
             IntPtr hIcon = bmp.GetHicon();
-            return System.Drawing.Icon.FromHandle(hIcon);
+            try
+            {
+                using var icon = System.Drawing.Icon.FromHandle(hIcon);
+                return (System.Drawing.Icon)icon.Clone();
+            }
+            finally
+            {
+                NativeInterop.DestroyIcon(hIcon);
+            }
         }
 
         private static ImageSource CreateOverlayIcon(Color accent, string configName)
@@ -338,19 +378,25 @@ namespace AutoKey
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                dc.DrawEllipse(new SolidColorBrush(accent), null, new Point(8, 8), 7, 7);
+                dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 1), new Point(6, 10), 4.8, 4.8);
                 string badgeText = GetConfigBadgeText(configName);
                 if (!string.IsNullOrWhiteSpace(badgeText))
                 {
+                    dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(25, 84, 190)),
+                        new Pen(Brushes.White, 0.8),
+                        new Point(11.2, 4.8),
+                        badgeText.Length > 1 ? 5.7 : 5.2,
+                        5.2);
+
                     var text = new FormattedText(
                         badgeText,
                         CultureInfo.CurrentUICulture,
                         FlowDirection.LeftToRight,
                         new Typeface("Segoe UI"),
-                        badgeText.Length > 1 ? 8.5 : 11,
+                        badgeText.Length > 1 ? 6.8 : 8.3,
                         Brushes.White,
                         1.0);
-                    dc.DrawText(text, new Point((size - text.Width) / 2, (size - text.Height) / 2 - 0.5));
+                    dc.DrawText(text, new Point(11.2 - (text.Width / 2), 4.8 - (text.Height / 2) - 0.5));
                 }
             }
             var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
@@ -364,6 +410,56 @@ namespace AutoKey
             string state = ViewModel.IsRunning ? "运行中" : "已停止";
             string text = $"AutoKey - {ViewModel.SelectedConfig} - {state}";
             return text.Length > 63 ? text[..63] : text;
+        }
+
+        private string BuildWindowTitle()
+        {
+            string state = ViewModel.IsRunning ? "运行中" : "已停止";
+            return $"AutoKey - {ViewModel.SelectedConfig} - {state}";
+        }
+
+        private void UpdateTrayIconSafe(System.Drawing.Icon icon)
+        {
+            if (_trayIcon == null || _isReallyClosing)
+                return;
+
+            try
+            {
+                _trayIcon.Icon = icon;
+                _trayIcon.Text = BuildTrayTooltip();
+            }
+            catch (Exception ex) when (ex is NullReferenceException or ObjectDisposedException or InvalidOperationException)
+            {
+                App.LogError("UpdateTrayIcon", ex);
+                RecreateTrayIcon(icon);
+            }
+        }
+
+        private void RecreateTrayIcon(System.Drawing.Icon icon)
+        {
+            if (_isReallyClosing)
+                return;
+
+            try
+            {
+                try
+                {
+                    _trayIcon?.Dispose();
+                }
+                catch { }
+
+                _trayIcon = null;
+                SetupTrayIcon();
+                if (_trayIcon != null)
+                {
+                    _trayIcon.Icon = icon;
+                    _trayIcon.Text = BuildTrayTooltip();
+                }
+            }
+            catch (Exception recreateEx)
+            {
+                App.LogError("RecreateTrayIcon", recreateEx);
+            }
         }
 
         private static void DrawConfigBadge(System.Drawing.Graphics g, System.Drawing.Rectangle rect, string configName)
@@ -413,6 +509,10 @@ namespace AutoKey
                     BindWindowUnderCursor();
                     handled = true;
                 }
+                else if (TryHandleRegisteredConfigHotkey(hotkeyId))
+                {
+                    handled = true;
+                }
             }
             else if (msg == (int)NativeInterop.WM_AUTOKEY_RESTORE)
             {
@@ -427,6 +527,112 @@ namespace AutoKey
             return IntPtr.Zero;
         }
 
+        private bool TryHandleRegisteredConfigHotkey(int hotkeyId)
+        {
+            if (!_registeredConfigHotkeys.TryGetValue(hotkeyId, out string? configName))
+                return false;
+
+            if (IsEditingInputInThisWindow())
+                return true;
+
+            if (string.IsNullOrWhiteSpace(configName))
+                ViewModel.LoadNextConfig();
+            else
+                ViewModel.LoadConfigByName(configName);
+
+            ViewModel.RefreshConfigList();
+            KeyList.ItemsSource = ViewModel.Keys;
+            RefreshConfigComboText();
+            RefreshRegisteredConfigHotkeys();
+            UpdateWindowIcon();
+            return true;
+        }
+
+        private void RefreshRegisteredConfigHotkeys()
+        {
+            if (_windowHandle == IntPtr.Zero || _isReallyClosing)
+                return;
+
+            UnregisterConfigHotkeys();
+
+            int id = HOTKEY_CONFIG_BASE;
+            var usedHotkeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var warnings = new List<string>();
+
+            TryRegisterConfigHotkey(id++, ViewModel.CycleConfigHotkey, null, "切换配置", usedHotkeys, warnings);
+
+            foreach (var item in ViewModel.ConfigHotkeys.ToList())
+            {
+                TryRegisterConfigHotkey(id++, item.Hotkey, item.ConfigName, $"配置 [{item.ConfigName}]", usedHotkeys, warnings);
+            }
+
+            if (warnings.Count > 0)
+            {
+                string message = string.Join("；", warnings.Take(2));
+                if (warnings.Count > 2)
+                    message += $"；另有 {warnings.Count - 2} 项";
+                ViewModel.StatusText = $"快捷键注册提示: {message}";
+            }
+            else if (ViewModel.StatusText.StartsWith("快捷键注册提示", StringComparison.Ordinal))
+            {
+                ViewModel.StatusText = "快捷键已更新";
+            }
+        }
+
+        private void TryRegisterConfigHotkey(
+            int id,
+            string hotkey,
+            string? configName,
+            string label,
+            Dictionary<string, string> usedHotkeys,
+            List<string> warnings)
+        {
+            if (string.IsNullOrWhiteSpace(hotkey))
+                return;
+
+            if (!HotkeyGesture.TryParse(hotkey, out var keys))
+            {
+                warnings.Add($"{label} [{hotkey}] 无法识别");
+                return;
+            }
+
+            string normalized = HotkeyGesture.FromVirtualKeys(keys);
+            if (!HotkeyGesture.TryGetRegistration(normalized, out int modifiers, out int key))
+            {
+                warnings.Add($"{label} [{normalized}] 需要一个主键");
+                return;
+            }
+
+            if (usedHotkeys.TryGetValue(normalized, out string? existingLabel))
+            {
+                warnings.Add($"{label} [{normalized}] 与 {existingLabel} 重复");
+                return;
+            }
+
+            if (!NativeInterop.RegisterHotKey(_windowHandle, id, modifiers, key))
+            {
+                string error = NativeInterop.GetLastWin32ErrorMessage();
+                warnings.Add($"{label} [{normalized}] 被占用或注册失败");
+                App.LogError("RegisterConfigHotkey",
+                    new InvalidOperationException($"{label} [{normalized}] failed: {error}"));
+                return;
+            }
+
+            usedHotkeys[normalized] = label;
+            _registeredConfigHotkeys[id] = configName;
+        }
+
+        private void UnregisterConfigHotkeys()
+        {
+            if (_windowHandle == IntPtr.Zero)
+                return;
+
+            foreach (int id in _registeredConfigHotkeys.Keys.ToList())
+                NativeInterop.UnregisterHotKey(_windowHandle, id);
+
+            _registeredConfigHotkeys.Clear();
+        }
+
         #region Global Mouse Hook (for right-click drag window binding)
 
         private void InstallMouseHook()
@@ -437,6 +643,13 @@ namespace AutoKey
             _mouseHookId = NativeInterop.SetWindowsHookEx(
                 NativeInterop.WH_MOUSE_LL, _mouseProc,
                 NativeInterop.GetModuleHandle(curModule.ModuleName), 0);
+
+            if (_mouseHookId == IntPtr.Zero)
+            {
+                var ex = new Win32Exception(Marshal.GetLastWin32Error());
+                App.LogError("InstallMouseHook", ex);
+                ViewModel.StatusText = $"鼠标钩子安装失败: {ex.Message}";
+            }
         }
 
         private void UninstallMouseHook()
@@ -499,6 +712,13 @@ namespace AutoKey
             _keyboardHookId = NativeInterop.SetWindowsHookEx(
                 NativeInterop.WH_KEYBOARD_LL, _keyboardProc,
                 NativeInterop.GetModuleHandle(curModule.ModuleName), 0);
+
+            if (_keyboardHookId == IntPtr.Zero)
+            {
+                var ex = new Win32Exception(Marshal.GetLastWin32Error());
+                App.LogError("InstallKeyboardHook", ex);
+                ViewModel.StatusText = $"键盘钩子安装失败: {ex.Message}";
+            }
         }
 
         private void UninstallKeyboardHook()
@@ -516,43 +736,19 @@ namespace AutoKey
             {
                 int msg = wParam.ToInt32();
                 var kbData = Marshal.PtrToStructure<NativeInterop.KBDLLHOOKSTRUCT>(lParam);
-                int vk = HotkeyGesture.NormalizeVirtualKey((int)kbData.vkCode);
+                if (NativeInterop.IsAutoKeyInjected(in kbData))
+                    return NativeInterop.CallNextHookEx(_keyboardHookId, nCode, wParam, lParam);
+
                 bool isKeyDown = msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN;
                 bool isKeyUp = msg == NativeInterop.WM_KEYUP || msg == NativeInterop.WM_SYSKEYUP;
+                bool isLeftAlt = IsPhysicalLeftAlt(kbData);
 
-                if (isKeyDown)
-                {
-                    PruneReleasedHotkeyKeys();
-                    _pressedVirtualKeys.Add(vk);
-                }
-                else if (isKeyUp)
-                {
-                    if (!_hotkeyHandledUntilRelease && !IsEditingInputInThisWindow())
-                    {
-                        if (TryHandleConfigHotkey())
-                            _hotkeyHandledUntilRelease = true;
-                    }
-
-                    _pressedVirtualKeys.Remove(vk);
-                    if (!HotkeyGesture.IsModifier(vk) || _pressedVirtualKeys.Count == 0)
-                        _hotkeyHandledUntilRelease = false;
-                }
-
-                if (isKeyDown && !_hotkeyHandledUntilRelease && !IsEditingInputInThisWindow())
-                {
-                    if (TryHandleConfigHotkey())
-                    {
-                        _hotkeyHandledUntilRelease = true;
-                        return (IntPtr)1;
-                    }
-                }
-
-                // VK_LMENU = 0xA4, scan code 56 (0x38) for left, right has LLKHF_EXTENDED flag
-                bool isLeftAlt = kbData.vkCode == 0xA4 && (kbData.flags & 0x10) == 0;
+                if (isKeyDown && _leftAltDown && !isLeftAlt)
+                    _leftAltSolo = false;
 
                 if (isLeftAlt)
                 {
-                    if (msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN)
+                    if (isKeyDown)
                     {
                         if (!_leftAltDown)
                         {
@@ -571,59 +767,19 @@ namespace AutoKey
                         _leftAltDown = false;
                     }
                 }
-                else if (_leftAltDown && (msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN))
-                {
-                    // Another key pressed while Left Alt held - cancel solo
-                    _leftAltSolo = false;
-                }
             }
             return NativeInterop.CallNextHookEx(_keyboardHookId, nCode, wParam, lParam);
         }
 
-        private bool TryHandleConfigHotkey()
+        private static bool IsPhysicalLeftAlt(NativeInterop.KBDLLHOOKSTRUCT data)
         {
-            foreach (var item in ViewModel.ConfigHotkeys)
-            {
-                if (HotkeyGesture.Matches(item.Hotkey, _pressedVirtualKeys))
-                {
-                    Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        ViewModel.LoadConfigByName(item.ConfigName);
-                        KeyList.ItemsSource = ViewModel.Keys;
-                        RefreshConfigComboText();
-                    }));
-                    return true;
-                }
-            }
-
-            if (HotkeyGesture.Matches(ViewModel.CycleConfigHotkey, _pressedVirtualKeys))
-            {
-                Dispatcher.BeginInvoke(new Action(() =>
-                {
-                    ViewModel.LoadNextConfig();
-                    KeyList.ItemsSource = ViewModel.Keys;
-                    RefreshConfigComboText();
-                }));
+            int vk = (int)data.vkCode;
+            if (vk == 0xA4)
                 return true;
-            }
 
-            return false;
-        }
-
-        private void PruneReleasedHotkeyKeys()
-        {
-            var releasedKeys = new List<int>();
-            foreach (int pressedKey in _pressedVirtualKeys)
-            {
-                if (!NativeInterop.IsKeyDown(pressedKey))
-                    releasedKeys.Add(pressedKey);
-            }
-
-            foreach (int releasedKey in releasedKeys)
-                _pressedVirtualKeys.Remove(releasedKey);
-
-            if (_pressedVirtualKeys.Count == 0)
-                _hotkeyHandledUntilRelease = false;
+            return vk == 0x12 &&
+                   data.scanCode == 0x38 &&
+                   (data.flags & NativeInterop.LLKHF_EXTENDED) == 0;
         }
 
         private bool IsEditingInputInThisWindow()
@@ -690,6 +846,7 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.SaveConfig();
             ViewModel.RefreshConfigList();
+            RefreshRegisteredConfigHotkeys();
             RefreshConfigComboText();
             ViewModel.SaveAppState();
         }
@@ -700,6 +857,7 @@ namespace AutoKey
             ViewModel.LoadConfig();
             KeyList.ItemsSource = ViewModel.Keys;
             ViewModel.RefreshConfigList();
+            RefreshRegisteredConfigHotkeys();
             RefreshConfigComboText();
             ViewModel.SaveAppState();
         }
@@ -709,6 +867,7 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.DeleteConfig();
             ViewModel.RefreshConfigList();
+            RefreshRegisteredConfigHotkeys();
             RefreshConfigComboText();
             ViewModel.SaveAppState();
         }

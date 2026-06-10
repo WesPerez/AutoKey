@@ -1,6 +1,8 @@
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace AutoKey
@@ -19,6 +21,9 @@ namespace AutoKey
 
         public const int MOD_ALT = 0x0001;
         public const int MOD_CONTROL = 0x0002;
+        public const int MOD_SHIFT = 0x0004;
+        public const int MOD_WIN = 0x0008;
+        public const int MOD_NOREPEAT = 0x4000;
 
         public const int WM_HOTKEY = 0x0312;
         public const int WM_SETICON = 0x0080;
@@ -26,11 +31,16 @@ namespace AutoKey
 
         public const int INPUT_KEYBOARD = 1;
         public const ushort KEYEVENTF_KEYUP = 0x0002;
+        public const ushort KEYEVENTF_EXTENDEDKEY = 0x0001;
 
         public const int WH_MOUSE_LL = 14;
         public const int WH_KEYBOARD_LL = 13;
+        public const uint LLKHF_EXTENDED = 0x01;
+        public const uint LLKHF_INJECTED = 0x10;
         public const int WM_RBUTTONDOWN = 0x0204;
         public const int WM_RBUTTONUP = 0x0205;
+
+        public static readonly IntPtr AutoKeyInputMarker = new(0x41554B59);
         #endregion
 
         #region Structures
@@ -85,6 +95,10 @@ namespace AutoKey
         [DllImport("user32.dll")]
         public static extern bool SetForegroundWindow(IntPtr hWnd);
 
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool IsWindow(IntPtr hWnd);
+
         [DllImport("user32.dll", EntryPoint = "GetWindowLong")]
         public static extern IntPtr GetWindowLong32(IntPtr hWnd, int nIndex);
 
@@ -106,8 +120,9 @@ namespace AutoKey
         [DllImport("user32.dll")]
         public static extern bool AllowSetForegroundWindow(int dwProcessId);
 
-        [DllImport("user32.dll")]
-        public static extern IntPtr PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll")]
         public static extern IntPtr SendMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
@@ -126,11 +141,17 @@ namespace AutoKey
         #endregion
 
         #region Hotkey Functions
-        [DllImport("user32.dll")]
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
 
-        [DllImport("user32.dll")]
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        #endregion
+
+        #region Icon Functions
+        [DllImport("user32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool DestroyIcon(IntPtr hIcon);
         #endregion
 
         #region Hook Functions
@@ -174,8 +195,12 @@ namespace AutoKey
         /// Send a key press to a specific window handle using PostMessage (background).
         /// Uses randomized press duration to mimic human typing.
         /// </summary>
-        public static async Task SendKeyToWindowAsync(IntPtr hWnd, int vkCode)
+        public static async Task SendKeyToWindowAsync(IntPtr hWnd, int vkCode, CancellationToken token = default)
         {
+            token.ThrowIfCancellationRequested();
+            if (hWnd == IntPtr.Zero || !IsWindow(hWnd))
+                throw new InvalidOperationException("绑定窗口已失效，请重新绑定窗口。");
+
             uint scanCode = MapVirtualKey((uint)vkCode, 0);
             int lParamDown = 1 | ((int)scanCode << 16);
             bool isExtended = IsExtendedKey(vkCode);
@@ -186,29 +211,47 @@ namespace AutoKey
 
             int pressDuration = Humanizer.NextPressDuration();
 
-            PostMessage(hWnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)lParamDown);
-            await Task.Delay(pressDuration);
-            PostMessage(hWnd, WM_KEYUP, (IntPtr)vkCode, (IntPtr)lParamUp);
+            ThrowIfPostMessageFailed(hWnd, WM_KEYDOWN, vkCode, lParamDown);
+            await Task.Delay(pressDuration).ConfigureAwait(false);
+            ThrowIfPostMessageFailed(hWnd, WM_KEYUP, vkCode, lParamUp);
         }
 
         /// <summary>
         /// Send a key press to the foreground using SendInput.
         /// Uses randomized press duration to mimic human typing.
         /// </summary>
-        public static async Task SendKeyForegroundAsync(int vkCode)
+        public static async Task SendKeyForegroundAsync(int vkCode, CancellationToken token = default)
         {
+            token.ThrowIfCancellationRequested();
             int pressDuration = Humanizer.NextPressDuration();
 
-            SendInput(1, new[] { CreateKeyboardInput(vkCode, false) }, Marshal.SizeOf(typeof(INPUT)));
-            await Task.Delay(pressDuration);
-            SendInput(1, new[] { CreateKeyboardInput(vkCode, true) }, Marshal.SizeOf(typeof(INPUT)));
+            ThrowIfSendInputFailed(vkCode, false);
+            await Task.Delay(pressDuration).ConfigureAwait(false);
+            ThrowIfSendInputFailed(vkCode, true);
         }
 
         public static void SendKeyForeground(int vkCode)
             => SendKeyForegroundAsync(vkCode).GetAwaiter().GetResult();
 
+        private static void ThrowIfPostMessageFailed(IntPtr hWnd, uint message, int vkCode, int lParam)
+        {
+            if (!PostMessage(hWnd, message, (IntPtr)vkCode, (IntPtr)lParam))
+                throw new InvalidOperationException($"PostMessage 发送失败: {GetLastWin32ErrorMessage()}");
+        }
+
+        private static void ThrowIfSendInputFailed(int vkCode, bool keyUp)
+        {
+            uint sent = SendInput(1, new[] { CreateKeyboardInput(vkCode, keyUp) }, Marshal.SizeOf(typeof(INPUT)));
+            if (sent != 1)
+                throw new InvalidOperationException($"SendInput 发送失败: {GetLastWin32ErrorMessage()}");
+        }
+
         private static INPUT CreateKeyboardInput(int vkCode, bool keyUp)
         {
+            uint flags = keyUp ? KEYEVENTF_KEYUP : 0u;
+            if (IsExtendedKey(vkCode))
+                flags |= KEYEVENTF_EXTENDEDKEY;
+
             return new INPUT
             {
                 type = INPUT_KEYBOARD,
@@ -218,9 +261,9 @@ namespace AutoKey
                     {
                         wVk = (ushort)vkCode,
                         wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
-                        dwFlags = keyUp ? KEYEVENTF_KEYUP : 0u,
+                        dwFlags = flags,
                         time = 0,
-                        dwExtraInfo = IntPtr.Zero
+                        dwExtraInfo = AutoKeyInputMarker
                     }
                 }
             };
@@ -238,9 +281,8 @@ namespace AutoKey
                    vk == 0x5B || vk == 0x5C || // VK_LWIN, VK_RWIN
                    vk == 0x5D || // VK_APPS
                    vk == 0x90 || // VK_NUMLOCK
-                   vk == 0xA0 || vk == 0xA1 || // VK_LSHIFT, VK_RSHIFT
-                   vk == 0xA2 || vk == 0xA3 || // VK_LCONTROL, VK_RCONTROL
-                   vk == 0xA4 || vk == 0xA5;   // VK_LMENU, VK_RMENU
+                   vk == 0xA3 || // VK_RCONTROL
+                   vk == 0xA5;   // VK_RMENU
         }
 
         /// <summary>
@@ -274,6 +316,15 @@ namespace AutoKey
             var sb = new StringBuilder(256);
             GetWindowText(hWnd, sb, 256);
             return sb.ToString();
+        }
+
+        public static bool IsAutoKeyInjected(in KBDLLHOOKSTRUCT data)
+            => (data.flags & LLKHF_INJECTED) != 0 && data.dwExtraInfo == AutoKeyInputMarker;
+
+        public static string GetLastWin32ErrorMessage()
+        {
+            int error = Marshal.GetLastWin32Error();
+            return error == 0 ? "未知错误" : new Win32Exception(error).Message;
         }
 
         #endregion

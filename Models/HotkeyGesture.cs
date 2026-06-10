@@ -65,6 +65,50 @@ namespace AutoKey
             return pressed.SetEquals(hotkeyKeys);
         }
 
+        public static bool IsRegisterableHotkey(string? text)
+            => TryGetRegistration(text, out _, out _);
+
+        public static bool IsRegisterableHotkey(IEnumerable<int> virtualKeys)
+        {
+            var keys = virtualKeys
+                .Select(NormalizeVirtualKey)
+                .Where(vk => vk > 0)
+                .Distinct()
+                .ToHashSet();
+
+            return IsRegisterableKeySet(keys);
+        }
+
+        public static bool TryGetRegistration(string? text, out int modifiers, out int key)
+        {
+            modifiers = 0;
+            key = 0;
+            if (!TryParse(text, out var keys) || !IsRegisterableKeySet(keys))
+                return false;
+
+            foreach (int vk in keys)
+            {
+                if (IsModifier(vk))
+                {
+                    modifiers |= vk switch
+                    {
+                        VkControl => NativeInterop.MOD_CONTROL,
+                        VkShift => NativeInterop.MOD_SHIFT,
+                        VkAlt => NativeInterop.MOD_ALT,
+                        VkWin => NativeInterop.MOD_WIN,
+                        _ => 0
+                    };
+                }
+                else
+                {
+                    key = vk;
+                }
+            }
+
+            modifiers |= NativeInterop.MOD_NOREPEAT;
+            return key > 0;
+        }
+
         public static bool TryParse(string? text, out HashSet<int> virtualKeys)
         {
             virtualKeys = new HashSet<int>();
@@ -80,6 +124,12 @@ namespace AutoKey
             }
 
             return virtualKeys.Count > 0;
+        }
+
+        private static bool IsRegisterableKeySet(ISet<int> virtualKeys)
+        {
+            int nonModifierCount = virtualKeys.Count(vk => !IsModifier(vk));
+            return nonModifierCount == 1;
         }
 
         private static bool TryParsePart(string part, out int vk)

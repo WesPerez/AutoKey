@@ -97,7 +97,10 @@ namespace AutoKey.Controls
         {
             e.Handled = true;
 
-            Key key = e.Key;
+            Key key = GetActualKey(e);
+            if (key == Key.None)
+                return;
+
             if (key == Key.LeftShift || key == Key.RightShift ||
                 key == Key.LeftCtrl || key == Key.RightCtrl ||
                 key == Key.LeftAlt || key == Key.RightAlt ||
@@ -120,6 +123,17 @@ namespace AutoKey.Controls
 
             RaiseEvent(new RoutedEventArgs(KeyCapturedEvent, this));
             MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
+        }
+
+        private static Key GetActualKey(KeyEventArgs e)
+        {
+            if (e.Key == Key.System)
+                return e.SystemKey;
+            if (e.Key == Key.ImeProcessed)
+                return e.ImeProcessedKey;
+            if (e.Key == Key.DeadCharProcessed)
+                return e.DeadCharProcessedKey;
+            return e.Key;
         }
     }
 }

@@ -75,7 +75,7 @@ namespace AutoKey.Controls
         {
             e.Handled = true;
 
-            Key key = e.Key == Key.System ? e.SystemKey : e.Key;
+            Key key = GetActualKey(e);
             if (key == Key.Escape)
             {
                 HotkeyText = "";
@@ -99,6 +99,14 @@ namespace AutoKey.Controls
 
             if (!string.IsNullOrWhiteSpace(_capturedText))
             {
+                if (!HotkeyGesture.IsRegisterableHotkey(_pressedKeys))
+                {
+                    _pressedKeys.Clear();
+                    _capturedText = "";
+                    Text = "需包含一个主键";
+                    return;
+                }
+
                 HotkeyText = _capturedText;
                 FinishCapture();
                 MoveFocus(new TraversalRequest(FocusNavigationDirection.Next));
@@ -112,6 +120,17 @@ namespace AutoKey.Controls
             _capturedText = "";
             Text = string.IsNullOrWhiteSpace(HotkeyText) ? "未设置" : HotkeyText;
             Background = System.Windows.Media.Brushes.White;
+        }
+
+        private static Key GetActualKey(KeyEventArgs e)
+        {
+            if (e.Key == Key.System)
+                return e.SystemKey;
+            if (e.Key == Key.ImeProcessed)
+                return e.ImeProcessedKey;
+            if (e.Key == Key.DeadCharProcessed)
+                return e.DeadCharProcessedKey;
+            return e.Key;
         }
     }
 }

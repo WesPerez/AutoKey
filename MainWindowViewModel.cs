@@ -70,6 +70,17 @@ namespace AutoKey
         private int _antiPatternLevel = 2;
         private const int LoopRecoveryDelayMs = 100;
 
+        private sealed class KeyRunConfig
+        {
+            public int Index { get; init; }
+            public KeyConfig Source { get; init; } = null!;
+            public int KeyCode { get; init; }
+            public string KeyName { get; init; } = "";
+            public int Delay { get; init; }
+            public int RandomDelay { get; init; }
+            public bool IsEnabled { get; init; }
+        }
+
         public ObservableCollection<KeyConfig> Keys { get; } = new();
         public ObservableCollection<string> ConfigNames { get; } = new() { "默认" };
         public ObservableCollection<ConfigHotkey> ConfigHotkeys { get; } = new();
@@ -208,23 +219,24 @@ namespace AutoKey
             IsRunning = true;
             StatusText = "运行中...";
             _globalCts = new CancellationTokenSource();
+            var runKeys = CreateRunSnapshot();
 
             if (IndependentLoop)
             {
                 _keyCtsArray = new CancellationTokenSource[Keys.Count];
-                for (int i = 0; i < Keys.Count; i++)
+                for (int i = 0; i < runKeys.Count; i++)
                 {
-                    if (Keys[i].IsEnabled && Keys[i].KeyCode > 0)
+                    if (runKeys[i].IsEnabled && runKeys[i].KeyCode > 0)
                     {
                         _keyCtsArray[i] = new CancellationTokenSource();
-                        Keys[i].IsRunning = true;
-                        _ = RunKeyLoopAsync(i, runVersion, _keyCtsArray[i].Token);
+                        runKeys[i].Source.IsRunning = true;
+                        _ = RunKeyLoopAsync(runKeys[i].Source, runKeys[i], runVersion, _keyCtsArray[i].Token);
                     }
                 }
             }
             else
             {
-                _ = RunSequentialLoopAsync(runVersion, _globalCts.Token);
+                _ = RunSequentialLoopAsync(runKeys, runVersion, _globalCts.Token);
             }
         }
 
@@ -241,9 +253,22 @@ namespace AutoKey
             StatusText = "已停止";
         }
 
-        private async Task RunKeyLoopAsync(int keyIndex, int runVersion, CancellationToken token)
+        private List<KeyRunConfig> CreateRunSnapshot()
         {
-            var key = Keys[keyIndex];
+            return Keys.Select((key, index) => new KeyRunConfig
+            {
+                Index = index,
+                Source = key,
+                IsEnabled = key.IsEnabled,
+                KeyCode = key.KeyCode,
+                KeyName = key.KeyName,
+                Delay = key.Delay,
+                RandomDelay = key.RandomDelay
+            }).ToList();
+        }
+
+        private async Task RunKeyLoopAsync(KeyConfig key, KeyRunConfig runKey, int runVersion, CancellationToken token)
+        {
             int loopCount = GetLoopCount();
             int currentLoop = 0;
             try
@@ -252,9 +277,9 @@ namespace AutoKey
                 {
                     try
                     {
-                        await SendKeyAsync(key, keyIndex);
-                        int delay = CalcDelay(key, keyIndex);
-                        await Task.Delay(delay, token);
+                        await SendKeyAsync(runKey, token).ConfigureAwait(false);
+                        int delay = CalcDelay(runKey);
+                        await Task.Delay(delay, token).ConfigureAwait(false);
                         currentLoop++;
                         if (loopCount > 0 && currentLoop >= loopCount) break;
                     }
@@ -264,13 +289,13 @@ namespace AutoKey
                     }
                     catch (Exception ex)
                     {
-                        App.LogError($"RunKeyLoopAsync[{key.KeyName}]", ex);
-                        SetStatusTextSafe($"按键 [{key.KeyName}] 循环异常，已自动恢复: {ex.Message}");
+                        App.LogError($"RunKeyLoopAsync[{runKey.KeyName}]", ex);
+                        SetStatusTextSafe($"按键 [{runKey.KeyName}] 循环异常，已自动恢复: {ex.Message}");
 
                         if (loopCount > 0)
                             break;
 
-                        await Task.Delay(LoopRecoveryDelayMs, token);
+                        await Task.Delay(LoopRecoveryDelayMs, token).ConfigureAwait(false);
                     }
                 }
             }
@@ -278,7 +303,7 @@ namespace AutoKey
             catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception ex)
             {
-                App.LogError($"RunKeyLoopAsync[{key.KeyName}]", ex);
+                App.LogError($"RunKeyLoopAsync[{runKey.KeyName}]", ex);
                 SetStatusTextSafe($"运行出错: {ex.Message}");
             }
             finally
@@ -294,7 +319,7 @@ namespace AutoKey
             }
         }
 
-        private async Task RunSequentialLoopAsync(int runVersion, CancellationToken token)
+        private async Task RunSequentialLoopAsync(IReadOnlyList<KeyRunConfig> runKeys, int runVersion, CancellationToken token)
         {
             int loopCount = GetLoopCount();
             int currentLoop = 0;
@@ -302,21 +327,22 @@ namespace AutoKey
             {
                 while (!token.IsCancellationRequested)
                 {
-                    for (int i = 0; i < Keys.Count; i++)
+                    for (int i = 0; i < runKeys.Count; i++)
                     {
-                        var key = Keys[i];
+                        var runKey = runKeys[i];
+                        var key = runKey.Source;
                         if (token.IsCancellationRequested) break;
-                        if (!key.IsEnabled || key.KeyCode <= 0) continue;
-                        key.IsRunning = true;
+                        if (!runKey.IsEnabled || runKey.KeyCode <= 0) continue;
+                        SetKeyRunningSafe(key, true);
                         try
                         {
-                            await SendKeyAsync(key, i);
-                            int delay = CalcDelay(key, i);
-                            await Task.Delay(delay, token);
+                            await SendKeyAsync(runKey, token).ConfigureAwait(false);
+                            int delay = CalcDelay(runKey);
+                            await Task.Delay(delay, token).ConfigureAwait(false);
                         }
                         finally
                         {
-                            key.IsRunning = false;
+                            SetKeyRunningSafe(key, false);
                         }
                     }
                     currentLoop++;
@@ -324,6 +350,7 @@ namespace AutoKey
                 }
             }
             catch (TaskCanceledException) { }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception ex)
             {
                 Application.Current?.Dispatcher.Invoke(() =>
@@ -355,30 +382,39 @@ namespace AutoKey
             StatusText = "已完成";
         }
 
-        private int CalcDelay(KeyConfig key, int keyIndex)
+        private int CalcDelay(KeyRunConfig key)
         {
             long combinedRange = (long)key.RandomDelay + GlobalRandomDelay;
             int safeRange = (int)Math.Clamp(combinedRange, 0, int.MaxValue / 4);
-            int delay = Humanizer.NextDelay(key.Delay, safeRange, keyIndex);
+            int delay = Humanizer.NextDelay(key.Delay, safeRange, key.Index);
             return Math.Clamp(delay, 20, int.MaxValue - 1);
         }
 
-        private async Task SendKeyAsync(KeyConfig key, int keyIndex)
+        private async Task SendKeyAsync(KeyRunConfig key, CancellationToken token)
         {
+            IntPtr targetWindow = IntPtr.Zero;
             try
             {
-                int prePressDelay = Humanizer.NextPrePressDelay(keyIndex);
+                int prePressDelay = Humanizer.NextPrePressDelay(key.Index);
                 if (prePressDelay > 0)
-                    await Task.Delay(prePressDelay);
+                    await Task.Delay(prePressDelay, token).ConfigureAwait(false);
 
-                if (IsWindowBound && _boundWindowHandle != IntPtr.Zero)
-                    await NativeInterop.SendKeyToWindowAsync(_boundWindowHandle, key.KeyCode);
+                token.ThrowIfCancellationRequested();
+                targetWindow = _boundWindowHandle;
+                if (targetWindow != IntPtr.Zero)
+                    await NativeInterop.SendKeyToWindowAsync(targetWindow, key.KeyCode, token).ConfigureAwait(false);
                 else
-                    await NativeInterop.SendKeyForegroundAsync(key.KeyCode);
+                    await NativeInterop.SendKeyForegroundAsync(key.KeyCode, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
                 App.LogError($"SendKeyAsync[{key.KeyName}]", ex);
+                if (targetWindow != IntPtr.Zero && !NativeInterop.IsWindow(targetWindow))
+                    ClearBoundWindowSafe();
                 SetStatusTextSafe($"发送按键出错: {ex.Message}");
             }
         }
@@ -396,6 +432,47 @@ namespace AutoKey
             catch (Exception ex)
             {
                 App.LogError("SetStatusTextSafe", ex);
+            }
+        }
+
+        private static void SetKeyRunningSafe(KeyConfig key, bool isRunning)
+        {
+            try
+            {
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher == null || dispatcher.CheckAccess())
+                    key.IsRunning = isRunning;
+                else
+                    dispatcher.Invoke(() => key.IsRunning = isRunning);
+            }
+            catch (Exception ex)
+            {
+                App.LogError("SetKeyRunningSafe", ex);
+            }
+        }
+
+        private void ClearBoundWindowSafe()
+        {
+            try
+            {
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher == null || dispatcher.CheckAccess())
+                {
+                    BoundWindowHandle = IntPtr.Zero;
+                    BoundWindowTitle = "未绑定";
+                }
+                else
+                {
+                    dispatcher.Invoke(() =>
+                    {
+                        BoundWindowHandle = IntPtr.Zero;
+                        BoundWindowTitle = "未绑定";
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                App.LogError("ClearBoundWindowSafe", ex);
             }
         }
 
@@ -459,6 +536,32 @@ namespace AutoKey
         private string GetAppStatePath()
             => Path.Combine(GetAppDirectory(), "app-state.json");
 
+        private static void WriteAllTextAtomic(string filePath, string contents)
+        {
+            string? directory = Path.GetDirectoryName(filePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+                Directory.CreateDirectory(directory);
+
+            string tempPath = $"{filePath}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllText(tempPath, contents);
+                if (File.Exists(filePath))
+                    File.Replace(tempPath, filePath, null);
+                else
+                    File.Move(tempPath, filePath);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch { }
+            }
+        }
+
         private static string SanitizeConfigName(string name)
         {
             string sanitized = name.Trim();
@@ -499,11 +602,12 @@ namespace AutoKey
                 SelectedConfig = name;
                 string filePath = Path.Combine(GetConfigDirectory(), $"{name}.json");
                 string json = JsonSerializer.Serialize(dto, JsonOptions);
-                File.WriteAllText(filePath, json);
+                WriteAllTextAtomic(filePath, json);
                 StatusText = $"配置 [{name}] 已保存";
             }
             catch (Exception ex)
             {
+                App.LogError("SaveConfig", ex);
                 StatusText = $"保存配置出错: {ex.Message}";
             }
         }
@@ -572,6 +676,7 @@ namespace AutoKey
             }
             catch (Exception ex)
             {
+                App.LogError("LoadConfig", ex);
                 StatusText = $"加载配置出错: {ex.Message}";
             }
         }
@@ -619,9 +724,12 @@ namespace AutoKey
                     CycleConfigHotkey = CycleConfigHotkey
                 };
                 string json = JsonSerializer.Serialize(dto, JsonOptions);
-                File.WriteAllText(GetAppStatePath(), json);
+                WriteAllTextAtomic(GetAppStatePath(), json);
             }
-            catch { /* Best effort; config saving still reports its own errors. */ }
+            catch (Exception ex)
+            {
+                App.LogError("SaveAppState", ex);
+            }
         }
 
         public void LoadAppState()
@@ -713,7 +821,7 @@ namespace AutoKey
             if (string.IsNullOrWhiteSpace(value))
                 return fallback;
 
-            return HotkeyGesture.TryParse(value, out var keys)
+            return HotkeyGesture.TryParse(value, out var keys) && HotkeyGesture.IsRegisterableHotkey(keys)
                 ? HotkeyGesture.FromVirtualKeys(keys)
                 : fallback;
         }
@@ -727,8 +835,12 @@ namespace AutoKey
                     hotkey.ValueKind == JsonValueKind.String)
                 {
                     string? value = hotkey.GetString();
-                    if (!string.IsNullOrWhiteSpace(value) && HotkeyGesture.TryParse(value, out var keys))
+                    if (!string.IsNullOrWhiteSpace(value) &&
+                        HotkeyGesture.TryParse(value, out var keys) &&
+                        HotkeyGesture.IsRegisterableHotkey(keys))
+                    {
                         return HotkeyGesture.FromVirtualKeys(keys);
+                    }
                 }
             }
             catch

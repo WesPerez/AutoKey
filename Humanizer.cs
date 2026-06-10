@@ -48,7 +48,7 @@ namespace AutoKey
                 randomRange = Math.Max(0, randomRange);
 
                 var state = GetDelayState(profileId);
-                int minDelay = GetMinimumDelay(baseDelay);
+                int minDelay = GetMinimumDelay(baseDelay, randomRange);
                 int maxDelay = randomRange > 0
                     ? (int)Math.Min(int.MaxValue - 1L, (long)baseDelay + randomRange)
                     : Math.Max(minDelay, baseDelay);
@@ -58,7 +58,7 @@ namespace AutoKey
                 {
                     double sigma = Math.Max(1.0, randomRange / 3.0);
                     int jitter = (int)Math.Round(NextGaussian() * sigma);
-                    jitter = Math.Clamp(jitter, minDelay - baseDelay, randomRange);
+                    jitter = Math.Clamp(jitter, -randomRange, randomRange);
                     delay = baseDelay + jitter;
                 }
 
@@ -72,7 +72,7 @@ namespace AutoKey
                 if (AntiPatternLevel >= 2)
                 {
                     state.TempoFactor = Math.Clamp(state.TempoFactor + (NextGaussian() * 0.006), 0.92, 1.08);
-                    delay = (int)Math.Clamp(Math.Round(delay * state.TempoFactor), minDelay, int.MaxValue - 1);
+                    delay = (int)Math.Clamp(Math.Round(delay * state.TempoFactor), minDelay, maxDelay);
 
                     state.KeystrokesSincePause++;
                     double pauseProbability = Math.Min(0.18, state.KeystrokesSincePause / (double)FatigueThreshold * 0.06);
@@ -144,8 +144,11 @@ namespace AutoKey
             return state;
         }
 
-        private static int GetMinimumDelay(int baseDelay)
+        private static int GetMinimumDelay(int baseDelay, int randomRange)
         {
+            if (randomRange > 0)
+                return Math.Max(MinimumDelay, baseDelay - randomRange);
+
             if (baseDelay <= MinimumDelay)
                 return MinimumDelay;
 

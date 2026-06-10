@@ -139,7 +139,7 @@
                             </StackPanel>
                             <TextBlock Grid.Column="1" Text="按键" FontWeight="Bold" FontSize="12"
                                        HorizontalAlignment="Center" Foreground="#555"/>
-                            <TextBlock Grid.Column="2" Text="独立随机延迟(ms)" FontWeight="Bold" FontSize="12"
+                            <TextBlock Grid.Column="2" Text="单独随机范围(ms)" FontWeight="Bold" FontSize="12"
                                        HorizontalAlignment="Center" Foreground="#555"/>
                             <TextBlock Grid.Column="3" Text="延迟(ms)" FontWeight="Bold" FontSize="12"
                                        HorizontalAlignment="Center" Foreground="#555"/>
@@ -228,7 +228,7 @@
 <LineBreak/><LineBreak/>
 <Run Foreground="#1565C0" FontWeight="Bold">3. 延迟设置</Run>
 <LineBreak/>
-"延迟(ms)" 为每次按键间隔。"独立随机延迟" 为该按键单独随机延迟范围(±ms)。底部"随机延迟"为全局范围。
+"延迟(ms)" 为每次按键间隔。"单独随机范围" 和底部"全局随机范围" 会相加，作为该按键的总随机范围(±ms)。
 <LineBreak/><LineBreak/>
 <Run Foreground="#1565C0" FontWeight="Bold">4. 独立循环</Run>
 <LineBreak/>
@@ -253,9 +253,9 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
 <Run Foreground="#C62828" FontWeight="Bold">提示: </Run>
 <Run Foreground="#555">后台发送按键使用 PostMessage 方式。部分应用可能需要前台模式。</Run>
 <LineBreak/><LineBreak/>
-<Run Foreground="#1565C0" FontWeight="Bold">7. 防检测</Run>
+<Run Foreground="#1565C0" FontWeight="Bold">7. 节奏随机化</Run>
 <LineBreak/>
-<Run Foreground="#555">关闭: 固定延迟+固定按键时长。基础: 高斯分布延迟+随机按键时长+防重复。增强: 基础+偶发微停顿(8%概率)。</Run>
+<Run Foreground="#555">固定: 固定延迟+固定按键时长。基础: 随机范围内高斯分布+随机按键时长+防重复。增强: 基础+偶发短暂停顿。</Run>
                         </TextBlock>
                     </ScrollViewer>
                 </Grid>
@@ -280,7 +280,7 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                     <CheckBox Content="独立循环" IsChecked="{Binding IndependentLoop}"
                               VerticalAlignment="Center" Margin="16,0,0,0" FontSize="13"/>
 
-                    <TextBlock Text="随机延迟(±ms):" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
+                    <TextBlock Text="全局随机(±ms):" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
                     <TextBox Text="{Binding GlobalRandomDelay, UpdateSourceTrigger=PropertyChanged}"
                              Width="70" Height="28" FontSize="13"
                              VerticalContentAlignment="Center" HorizontalContentAlignment="Center"
@@ -288,11 +288,11 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                              DataObject.Pasting="NumericOnly_Pasting"
                              LostFocus="NumericTextBox_LostFocus"/>
 
-                    <TextBlock Text="防检测:" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
+                    <TextBlock Text="节奏:" VerticalAlignment="Center" Margin="16,0,6,0" FontSize="13"/>
                     <ComboBox Width="100" Height="28" FontSize="13"
                               VerticalContentAlignment="Center"
                               SelectedIndex="{Binding AntiPatternLevel}">
-                        <ComboBoxItem Content="关闭"/>
+                        <ComboBoxItem Content="固定"/>
                         <ComboBoxItem Content="基础"/>
                         <ComboBoxItem Content="增强"/>
                     </ComboBox>
