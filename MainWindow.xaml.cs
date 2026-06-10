@@ -249,27 +249,34 @@ namespace AutoKey
 
         private void UpdateWindowIcon()
         {
-            _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
-            _runningTrayIcon ??= CreateTrayStatusIcon(true);
-
-            var icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
-
-            // Update tray icon
-            if (_trayIcon != null)
-                _trayIcon.Icon = icon;
-
-            // Force taskbar icon update via WM_SETICON
-            if (_windowHandle != IntPtr.Zero)
+            try
             {
-                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)0 /*ICON_SMALL*/, icon.Handle);
-                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)1 /*ICON_BIG*/, icon.Handle);
+                _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
+                _runningTrayIcon ??= CreateTrayStatusIcon(true);
+
+                var icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
+
+                // Update tray icon
+                if (_trayIcon != null)
+                    _trayIcon.Icon = icon;
+
+                // Force taskbar icon update via WM_SETICON
+                if (_windowHandle != IntPtr.Zero)
+                {
+                    NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)0 /*ICON_SMALL*/, icon.Handle);
+                    NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)1 /*ICON_BIG*/, icon.Handle);
+                }
+
+                // Taskbar overlay: the only reliable indicator when pinned to taskbar
+                if (TaskbarItemInfo != null)
+                {
+                    var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+                    TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor);
+                }
             }
-
-            // Taskbar overlay: the only reliable indicator when pinned to taskbar
-            if (TaskbarItemInfo != null)
+            catch (Exception ex)
             {
-                var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
-                TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor);
+                App.LogError("UpdateWindowIcon", ex);
             }
         }
 

@@ -68,7 +68,7 @@ namespace AutoKey
             };
         }
 
-        private static void LogError(string source, Exception? ex)
+        internal static void LogError(string source, Exception? ex)
         {
             try
             {

@@ -56,6 +56,7 @@ namespace AutoKey
         private bool _stopRequested;
         private int _runVersion;
         private int _antiPatternLevel = 2;
+        private const int LoopRecoveryDelayMs = 100;
 
         public ObservableCollection<KeyConfig> Keys { get; } = new();
         public ObservableCollection<string> ConfigNames { get; } = new() { "默认" };
@@ -210,18 +211,36 @@ namespace AutoKey
             {
                 while (!token.IsCancellationRequested)
                 {
-                    await SendKeyAsync(key);
-                    int delay = CalcDelay(key);
-                    await Task.Delay(delay, token);
-                    currentLoop++;
-                    if (loopCount > 0 && currentLoop >= loopCount) break;
+                    try
+                    {
+                        await SendKeyAsync(key);
+                        int delay = CalcDelay(key);
+                        await Task.Delay(delay, token);
+                        currentLoop++;
+                        if (loopCount > 0 && currentLoop >= loopCount) break;
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        App.LogError($"RunKeyLoopAsync[{key.KeyName}]", ex);
+                        SetStatusTextSafe($"按键 [{key.KeyName}] 循环异常，已自动恢复: {ex.Message}");
+
+                        if (loopCount > 0)
+                            break;
+
+                        await Task.Delay(LoopRecoveryDelayMs, token);
+                    }
                 }
             }
             catch (TaskCanceledException) { }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
             catch (Exception ex)
             {
-                Application.Current?.Dispatcher.Invoke(() =>
-                    StatusText = $"运行出错: {ex.Message}");
+                App.LogError($"RunKeyLoopAsync[{key.KeyName}]", ex);
+                SetStatusTextSafe($"运行出错: {ex.Message}");
             }
             finally
             {
@@ -298,8 +317,10 @@ namespace AutoKey
 
         private int CalcDelay(KeyConfig key)
         {
-            int combinedRange = key.RandomDelay + GlobalRandomDelay;
-            return Humanizer.NextDelay(key.Delay, combinedRange);
+            long combinedRange = (long)key.RandomDelay + GlobalRandomDelay;
+            int safeRange = (int)Math.Clamp(combinedRange, 0, int.MaxValue / 4);
+            int delay = Humanizer.NextDelay(key.Delay, safeRange);
+            return Math.Clamp(delay, 20, int.MaxValue - 1);
         }
 
         private async Task SendKeyAsync(KeyConfig key)
@@ -313,8 +334,24 @@ namespace AutoKey
             }
             catch (Exception ex)
             {
-                Application.Current?.Dispatcher.Invoke(() =>
-                    StatusText = $"发送按键出错: {ex.Message}");
+                App.LogError($"SendKeyAsync[{key.KeyName}]", ex);
+                SetStatusTextSafe($"发送按键出错: {ex.Message}");
+            }
+        }
+
+        private void SetStatusTextSafe(string text)
+        {
+            try
+            {
+                var dispatcher = Application.Current?.Dispatcher;
+                if (dispatcher == null || dispatcher.CheckAccess())
+                    StatusText = text;
+                else
+                    dispatcher.Invoke(() => StatusText = text);
+            }
+            catch (Exception ex)
+            {
+                App.LogError("SetStatusTextSafe", ex);
             }
         }
 
