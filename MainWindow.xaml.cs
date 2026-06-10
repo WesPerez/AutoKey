@@ -377,30 +377,31 @@ namespace AutoKey
 
         private static ImageSource CreateBadgeOverlay(Color accent, string configName)
         {
-            const int size = 32;
+            const int size = 48;
+            const double dpi = 192;
             string badgeText = GetConfigBadgeText(configName);
 
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
                 bool isSingleChar = badgeText.Length <= 1;
-                double badgeRadius = isSingleChar ? 14 : 16;
-                var badgeCenter = new Point(21, 11);
+                double badgeRadius = isSingleChar ? 12.6 : 14.4;
+                var badgeCenter = new Point(31.5, 16.5);
                 dc.DrawEllipse(new SolidColorBrush(accent),
-                    new Pen(Brushes.White, 2.5), badgeCenter, badgeRadius, badgeRadius);
+                    new Pen(Brushes.White, 3), badgeCenter, badgeRadius, badgeRadius);
 
                 var text = new FormattedText(
                     badgeText,
                     CultureInfo.CurrentUICulture,
                     FlowDirection.LeftToRight,
                     new Typeface("Segoe UI"),
-                    isSingleChar ? 18 : 14,
+                    isSingleChar ? 16 : 12.5,
                     Brushes.White,
                     1.0);
                 dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
             }
 
-            var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
+            var bitmap = new RenderTargetBitmap(size, size, dpi, dpi, PixelFormats.Pbgra32);
             bitmap.Render(visual);
             bitmap.Freeze();
             return bitmap;
