@@ -54,14 +54,6 @@ namespace AutoKey
             }
         }
 
-        public static IntPtr NextExtraInfo()
-        {
-            lock (_lock)
-            {
-                return (IntPtr)_rng.Next(0, 256);
-            }
-        }
-
         public static int NextMicroJitter()
         {
             lock (_lock)
