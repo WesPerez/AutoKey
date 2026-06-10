@@ -267,14 +267,8 @@ namespace AutoKey
                     _trayIcon.Text = BuildTrayTooltip();
                 }
 
-                // Force taskbar icon update via WM_SETICON
-                if (_windowHandle != IntPtr.Zero)
-                {
-                    NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)0 /*ICON_SMALL*/, icon.Handle);
-                    NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON, (IntPtr)1 /*ICON_BIG*/, icon.Handle);
-                }
-
-                // Taskbar overlay: the only reliable indicator when pinned to taskbar
+                // Keep the taskbar base icon as app.ico for pinned/unpinned consistency.
+                // Use overlay for runtime state and config badge.
                 if (TaskbarItemInfo != null)
                 {
                     var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
