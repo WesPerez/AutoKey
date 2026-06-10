@@ -105,7 +105,7 @@ namespace AutoKey
                 TaskbarItemInfo = new TaskbarItemInfo();
 
                 // Push high-res icon to Windows for crisp taskbar rendering
-                SetHighResWindowIcon();
+                
 
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
@@ -307,7 +307,7 @@ namespace AutoKey
                 TaskbarItemInfo.Overlay = CreateBadgeOverlay(accent, ViewModel.SelectedConfig);
 
                 // Refresh high-res icon when state changes
-                SetHighResWindowIcon();
+                
             }
             }
             catch (Exception ex)
@@ -377,34 +377,30 @@ namespace AutoKey
 
         private static ImageSource CreateBadgeOverlay(Color accent, string configName)
         {
-            // Use 48x48 at 192 DPI for crisp high-DPI rendering.
-            // Windows scales the overlay to fit the taskbar icon, so a larger
-            // source with more detail survives the downscale better.
-            const int size = 48;
-            const double dpi = 192;
+            const int size = 16;
             string badgeText = GetConfigBadgeText(configName);
 
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                // Badge fills most of the overlay, positioned top-right
-                double badgeRadius = badgeText.Length > 1 ? 22 : 20;
-                var badgeCenter = new Point(31, 17);
+                bool isSingleChar = badgeText.Length <= 1;
+                double badgeRadius = isSingleChar ? 5.5 : 6.5;
+                var badgeCenter = new Point(10.5, 5.5);
                 dc.DrawEllipse(new SolidColorBrush(accent),
-                    new Pen(Brushes.White, 3), badgeCenter, badgeRadius, badgeRadius);
+                    new Pen(Brushes.White, 1.2), badgeCenter, badgeRadius, badgeRadius);
 
                 var text = new FormattedText(
                     badgeText,
                     CultureInfo.CurrentUICulture,
                     FlowDirection.LeftToRight,
                     new Typeface("Segoe UI"),
-                    badgeText.Length > 1 ? 22 : 30,
+                    isSingleChar ? 8.5 : 6.5,
                     Brushes.White,
                     1.0);
                 dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
             }
 
-            var bitmap = new RenderTargetBitmap(size, size, dpi, dpi, PixelFormats.Pbgra32);
+            var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(visual);
             bitmap.Freeze();
             return bitmap;
@@ -467,27 +463,6 @@ namespace AutoKey
             }
         }
 
-        private void SetHighResWindowIcon()
-        {
-            if (_windowHandle == IntPtr.Zero)
-                return;
-
-            try
-            {
-                using var icon = System.Drawing.Icon.ExtractAssociatedIcon(
-                    Environment.ProcessPath ?? System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "");
-                if (icon == null)
-                    return;
-
-                // ICON_BIG (1) = large icon for taskbar/alt-tab
-                NativeInterop.SendMessage(_windowHandle, NativeInterop.WM_SETICON,
-                    (IntPtr)1, icon.Handle);
-            }
-            catch (Exception ex)
-            {
-                App.LogError("SetHighResWindowIcon", ex);
-            }
-        }
 
         private static void DrawConfigBadge(System.Drawing.Graphics g, System.Drawing.Rectangle rect, string configName)
         {
@@ -1078,6 +1053,8 @@ namespace AutoKey
 
     #endregion
 }
+
+
 
 
 
