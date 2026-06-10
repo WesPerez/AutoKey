@@ -169,7 +169,7 @@ namespace AutoKey
             if (key == null) return;
             if (enable)
             {
-                var exePath = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName ?? "";
+                var exePath = Environment.GetCommandLineArgs()[0];
                 key.SetValue(AutoStartValueName, $"\"{exePath}\"");
             }
             else
