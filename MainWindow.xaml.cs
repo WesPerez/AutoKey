@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Runtime.InteropServices;
@@ -56,6 +57,8 @@ namespace AutoKey
         private NativeInterop.LowLevelKeyboardProc? _keyboardProc;
         private bool _leftAltDown;
         private bool _leftAltSolo;
+        private readonly HashSet<int> _pressedVirtualKeys = new();
+        private bool _hotkeyHandledUntilRelease;
 
         // Tray icon for minimize-to-tray
         private Forms.NotifyIcon? _trayIcon;
@@ -444,6 +447,29 @@ namespace AutoKey
             {
                 int msg = wParam.ToInt32();
                 var kbData = Marshal.PtrToStructure<NativeInterop.KBDLLHOOKSTRUCT>(lParam);
+                int vk = HotkeyGesture.NormalizeVirtualKey((int)kbData.vkCode);
+                bool isKeyDown = msg == NativeInterop.WM_KEYDOWN || msg == NativeInterop.WM_SYSKEYDOWN;
+                bool isKeyUp = msg == NativeInterop.WM_KEYUP || msg == NativeInterop.WM_SYSKEYUP;
+
+                if (isKeyDown)
+                {
+                    _pressedVirtualKeys.Add(vk);
+                }
+                else if (isKeyUp)
+                {
+                    _pressedVirtualKeys.Remove(vk);
+                    if (_pressedVirtualKeys.Count == 0)
+                        _hotkeyHandledUntilRelease = false;
+                }
+
+                if (isKeyDown && !_hotkeyHandledUntilRelease && !IsEditingInputInThisWindow())
+                {
+                    if (TryHandleConfigHotkey())
+                    {
+                        _hotkeyHandledUntilRelease = true;
+                        return (IntPtr)1;
+                    }
+                }
 
                 // VK_LMENU = 0xA4, scan code 56 (0x38) for left, right has LLKHF_EXTENDED flag
                 bool isLeftAlt = kbData.vkCode == 0xA4 && (kbData.flags & 0x10) == 0;
@@ -476,6 +502,41 @@ namespace AutoKey
                 }
             }
             return NativeInterop.CallNextHookEx(_keyboardHookId, nCode, wParam, lParam);
+        }
+
+        private bool TryHandleConfigHotkey()
+        {
+            foreach (var item in ViewModel.ConfigHotkeys)
+            {
+                if (HotkeyGesture.Matches(item.Hotkey, _pressedVirtualKeys))
+                {
+                    Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        ViewModel.LoadConfigByName(item.ConfigName);
+                        KeyList.ItemsSource = ViewModel.Keys;
+                        RefreshConfigComboText();
+                    }));
+                    return true;
+                }
+            }
+
+            if (HotkeyGesture.Matches(ViewModel.CycleConfigHotkey, _pressedVirtualKeys))
+            {
+                Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    ViewModel.LoadNextConfig();
+                    KeyList.ItemsSource = ViewModel.Keys;
+                    RefreshConfigComboText();
+                }));
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool IsEditingInputInThisWindow()
+        {
+            return IsActive && Keyboard.FocusedElement is TextBox;
         }
 
         #endregion
@@ -538,6 +599,7 @@ namespace AutoKey
             ViewModel.SaveConfig();
             ViewModel.RefreshConfigList();
             RefreshConfigComboText();
+            ViewModel.SaveAppState();
         }
 
         private void BtnLoadConfig_Click(object sender, RoutedEventArgs e)
@@ -545,7 +607,9 @@ namespace AutoKey
             SyncConfigName();
             ViewModel.LoadConfig();
             KeyList.ItemsSource = ViewModel.Keys;
+            ViewModel.RefreshConfigList();
             RefreshConfigComboText();
+            ViewModel.SaveAppState();
         }
 
         private void BtnDeleteConfig_Click(object sender, RoutedEventArgs e)
@@ -554,6 +618,7 @@ namespace AutoKey
             ViewModel.DeleteConfig();
             ViewModel.RefreshConfigList();
             RefreshConfigComboText();
+            ViewModel.SaveAppState();
         }
 
         private void CmbConfig_LostFocus(object sender, RoutedEventArgs e) => SyncConfigName();

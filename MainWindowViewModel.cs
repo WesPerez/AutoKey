@@ -21,6 +21,7 @@ namespace AutoKey
         public bool IndependentLoop { get; set; } = true;
         public int GlobalRandomDelay { get; set; } = 100;
         public string LoopMode { get; set; } = "循环到手动停止";
+        public string ConfigHotkey { get; set; } = "";
         public double WindowWidth { get; set; }
         public double WindowHeight { get; set; }
         public int AntiPatternLevel { get; set; } = 2;
@@ -29,6 +30,13 @@ namespace AutoKey
     public class AppStateDto
     {
         public string SelectedConfig { get; set; } = "默认";
+        public string CycleConfigHotkey { get; set; } = "Ctrl+Z";
+    }
+
+    public class ConfigHotkey
+    {
+        public string ConfigName { get; set; } = "";
+        public string Hotkey { get; set; } = "";
     }
 
     public class KeyConfigDto
@@ -50,6 +58,10 @@ namespace AutoKey
         private IntPtr _boundWindowHandle = IntPtr.Zero;
         private string _statusText = "就绪";
         private string _selectedConfig = "默认";
+        private string _cycleConfigHotkey = "Ctrl+Z";
+        private string _selectedConfigHotkey = "";
+        private bool _suppressHotkeyAutoSave;
+        private bool _suppressAppStateAutoSave;
 
         private CancellationTokenSource? _globalCts;
         private CancellationTokenSource[]? _keyCtsArray;
@@ -60,6 +72,7 @@ namespace AutoKey
 
         public ObservableCollection<KeyConfig> Keys { get; } = new();
         public ObservableCollection<string> ConfigNames { get; } = new() { "默认" };
+        public ObservableCollection<ConfigHotkey> ConfigHotkeys { get; } = new();
         public ObservableCollection<string> LoopModes { get; } = new()
         {
             "循环到手动停止", "循环1次", "循环2次", "循环3次",
@@ -119,6 +132,31 @@ namespace AutoKey
         {
             get => _selectedConfig;
             set { _selectedConfig = SanitizeConfigName(value ?? "默认"); OnPropertyChanged(); }
+        }
+
+        public string CycleConfigHotkey
+        {
+            get => _cycleConfigHotkey;
+            set
+            {
+                _cycleConfigHotkey = NormalizeHotkeyText(value, "Ctrl+Z");
+                OnPropertyChanged();
+                if (!_suppressAppStateAutoSave)
+                    SaveAppState();
+            }
+        }
+
+        public string SelectedConfigHotkey
+        {
+            get => _selectedConfigHotkey;
+            set
+            {
+                _selectedConfigHotkey = NormalizeHotkeyText(value, "");
+                OnPropertyChanged();
+                UpsertConfigHotkey(SelectedConfig, _selectedConfigHotkey);
+                if (!_suppressHotkeyAutoSave && !string.IsNullOrWhiteSpace(SelectedConfig))
+                    SaveConfig();
+            }
         }
 
         public string StartButtonText => _isRunning ? "停止" : "开始";
@@ -214,7 +252,7 @@ namespace AutoKey
                 {
                     try
                     {
-                        await SendKeyAsync(key);
+                        await SendKeyAsync(key, keyIndex);
                         int delay = CalcDelay(key, keyIndex);
                         await Task.Delay(delay, token);
                         currentLoop++;
@@ -272,7 +310,7 @@ namespace AutoKey
                         key.IsRunning = true;
                         try
                         {
-                            await SendKeyAsync(key);
+                            await SendKeyAsync(key, i);
                             int delay = CalcDelay(key, i);
                             await Task.Delay(delay, token);
                         }
@@ -325,10 +363,14 @@ namespace AutoKey
             return Math.Clamp(delay, 20, int.MaxValue - 1);
         }
 
-        private async Task SendKeyAsync(KeyConfig key)
+        private async Task SendKeyAsync(KeyConfig key, int keyIndex)
         {
             try
             {
+                int prePressDelay = Humanizer.NextPrePressDelay(keyIndex);
+                if (prePressDelay > 0)
+                    await Task.Delay(prePressDelay);
+
                 if (IsWindowBound && _boundWindowHandle != IntPtr.Zero)
                     await NativeInterop.SendKeyToWindowAsync(_boundWindowHandle, key.KeyCode);
                 else
@@ -436,6 +478,7 @@ namespace AutoKey
                     IndependentLoop = IndependentLoop,
                     GlobalRandomDelay = GlobalRandomDelay,
                     LoopMode = LoopMode,
+                    ConfigHotkey = SelectedConfigHotkey,
                     WindowWidth = WindowWidth,
                     WindowHeight = WindowHeight,
                     AntiPatternLevel = AntiPatternLevel
@@ -518,6 +561,9 @@ namespace AutoKey
                 IndependentLoop = dto.IndependentLoop;
                 GlobalRandomDelay = dto.GlobalRandomDelay;
                 LoopMode = dto.LoopMode;
+                _suppressHotkeyAutoSave = true;
+                SelectedConfigHotkey = dto.ConfigHotkey;
+                _suppressHotkeyAutoSave = false;
                 WindowWidth = dto.WindowWidth;
                 WindowHeight = dto.WindowHeight;
                 AntiPatternLevel = dto.AntiPatternLevel;
@@ -536,6 +582,7 @@ namespace AutoKey
             {
                 string dir = GetConfigDirectory();
                 ConfigNames.Clear();
+                ConfigHotkeys.Clear();
                 ConfigNames.Add("默认");
                 foreach (var file in Directory.GetFiles(dir, "*.json"))
                 {
@@ -544,6 +591,16 @@ namespace AutoKey
                         continue;
                     if (n != "默认" && !ConfigNames.Contains(n))
                         ConfigNames.Add(n);
+
+                    string? hotkey = TryReadConfigHotkey(file);
+                    if (!string.IsNullOrWhiteSpace(hotkey))
+                    {
+                        ConfigHotkeys.Add(new ConfigHotkey
+                        {
+                            ConfigName = n,
+                            Hotkey = hotkey
+                        });
+                    }
                 }
             }
             catch (Exception ex)
@@ -556,7 +613,11 @@ namespace AutoKey
         {
             try
             {
-                var dto = new AppStateDto { SelectedConfig = SanitizeConfigName(SelectedConfig) };
+                var dto = new AppStateDto
+                {
+                    SelectedConfig = SanitizeConfigName(SelectedConfig),
+                    CycleConfigHotkey = CycleConfigHotkey
+                };
                 string json = JsonSerializer.Serialize(dto, JsonOptions);
                 File.WriteAllText(GetAppStatePath(), json);
             }
@@ -570,17 +631,26 @@ namespace AutoKey
                 string filePath = GetAppStatePath();
                 if (!File.Exists(filePath))
                 {
+                    _suppressAppStateAutoSave = true;
                     SelectedConfig = "默认";
+                    CycleConfigHotkey = "Ctrl+Z";
+                    _suppressAppStateAutoSave = false;
                     return;
                 }
 
                 string json = File.ReadAllText(filePath);
                 var dto = JsonSerializer.Deserialize<AppStateDto>(json, JsonOptions);
+                _suppressAppStateAutoSave = true;
                 SelectedConfig = SanitizeConfigName(dto?.SelectedConfig ?? "默认");
+                CycleConfigHotkey = dto?.CycleConfigHotkey ?? "Ctrl+Z";
+                _suppressAppStateAutoSave = false;
             }
             catch
             {
+                _suppressAppStateAutoSave = true;
                 SelectedConfig = "默认";
+                CycleConfigHotkey = "Ctrl+Z";
+                _suppressAppStateAutoSave = false;
             }
         }
 
@@ -615,6 +685,84 @@ namespace AutoKey
         }
 
         #endregion
+
+        public void LoadNextConfig()
+        {
+            RefreshConfigList();
+            if (ConfigNames.Count == 0)
+                return;
+
+            int currentIndex = ConfigNames.IndexOf(SelectedConfig);
+            int nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % ConfigNames.Count;
+            LoadConfigByName(ConfigNames[nextIndex]);
+        }
+
+        public void LoadConfigByName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                return;
+
+            StopAll();
+            SelectedConfig = name;
+            LoadConfig();
+            SaveAppState();
+        }
+
+        private static string NormalizeHotkeyText(string? value, string fallback)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return fallback;
+
+            return HotkeyGesture.TryParse(value, out var keys)
+                ? HotkeyGesture.FromVirtualKeys(keys)
+                : fallback;
+        }
+
+        private static string? TryReadConfigHotkey(string filePath)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(filePath));
+                if (document.RootElement.TryGetProperty(nameof(ConfigDto.ConfigHotkey), out var hotkey) &&
+                    hotkey.ValueKind == JsonValueKind.String)
+                {
+                    string? value = hotkey.GetString();
+                    if (!string.IsNullOrWhiteSpace(value) && HotkeyGesture.TryParse(value, out var keys))
+                        return HotkeyGesture.FromVirtualKeys(keys);
+                }
+            }
+            catch
+            {
+            }
+
+            return null;
+        }
+
+        private void UpsertConfigHotkey(string configName, string hotkey)
+        {
+            configName = SanitizeConfigName(configName);
+            if (string.IsNullOrWhiteSpace(configName))
+                return;
+
+            var existing = ConfigHotkeys.FirstOrDefault(x =>
+                string.Equals(x.ConfigName, configName, StringComparison.OrdinalIgnoreCase));
+
+            if (string.IsNullOrWhiteSpace(hotkey))
+            {
+                if (existing != null)
+                    ConfigHotkeys.Remove(existing);
+                return;
+            }
+
+            if (existing == null)
+            {
+                ConfigHotkeys.Add(new ConfigHotkey { ConfigName = configName, Hotkey = hotkey });
+            }
+            else
+            {
+                existing.Hotkey = hotkey;
+            }
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)

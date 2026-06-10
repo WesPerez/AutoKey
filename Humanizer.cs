@@ -10,6 +10,7 @@ namespace AutoKey
             public int LastDelay { get; set; }
             public int ConsecutiveCount { get; set; }
             public int KeystrokesSincePause { get; set; }
+            public double TempoFactor { get; set; } = 1.0;
         }
 
         private static readonly Random _rng = new();
@@ -70,6 +71,9 @@ namespace AutoKey
 
                 if (AntiPatternLevel >= 2)
                 {
+                    state.TempoFactor = Math.Clamp(state.TempoFactor + (NextGaussian() * 0.006), 0.92, 1.08);
+                    delay = (int)Math.Clamp(Math.Round(delay * state.TempoFactor), minDelay, int.MaxValue - 1);
+
                     state.KeystrokesSincePause++;
                     double pauseProbability = Math.Min(0.18, state.KeystrokesSincePause / (double)FatigueThreshold * 0.06);
 
@@ -83,6 +87,25 @@ namespace AutoKey
 
                 state.LastDelay = delay;
                 return delay;
+            }
+        }
+
+        public static int NextPrePressDelay(int profileId)
+        {
+            lock (_lock)
+            {
+                if (AntiPatternLevel <= 1)
+                    return 0;
+
+                _ = GetDelayState(profileId);
+
+                if (_rng.NextDouble() < 0.025)
+                    return _rng.Next(8, 32);
+
+                if (_rng.NextDouble() < 0.004)
+                    return _rng.Next(80, 180);
+
+                return 0;
             }
         }
 

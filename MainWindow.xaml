@@ -320,5 +320,25 @@ Ctrl+Alt+空格 - 绑定鼠标指向窗口
                 </StackPanel>
             </Grid>
         </Border>
+
+        <Border Grid.Row="3" Background="White" BorderBrush="#D0D0D0" BorderThickness="1"
+                CornerRadius="4" Padding="10,8" Margin="0,6,0,0">
+            <DockPanel LastChildFill="True">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <TextBlock Text="切换配置:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="13"/>
+                    <controls:HotkeyCaptureBox HotkeyText="{Binding CycleConfigHotkey, Mode=TwoWay}"
+                                               Width="110" Margin="0,0,16,0"
+                                               ToolTip="默认轮询切换配置"/>
+
+                    <TextBlock Text="当前配置快捷键:" VerticalAlignment="Center" Margin="0,0,6,0" FontSize="13"/>
+                    <controls:HotkeyCaptureBox HotkeyText="{Binding SelectedConfigHotkey, Mode=TwoWay}"
+                                               Width="130"
+                                               ToolTip="保存配置后，此快捷键可直接切换到当前配置"/>
+                </StackPanel>
+                <TextBlock VerticalAlignment="Center" FontSize="12" Foreground="#777" TextWrapping="Wrap">
+                    点击输入框后按组合键，松开后保存；Esc 清空当前配置快捷键。默认 Ctrl+Z 会按配置列表循环切换。
+                </TextBlock>
+            </DockPanel>
+        </Border>
     </Grid>
 </Window>
