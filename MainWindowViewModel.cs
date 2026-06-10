@@ -166,6 +166,7 @@ namespace AutoKey
             if (IsRunning) return;
             _stopRequested = false;
             int runVersion = ++_runVersion;
+            Humanizer.Reset();
             IsRunning = true;
             StatusText = "运行中...";
             _globalCts = new CancellationTokenSource();
@@ -214,7 +215,7 @@ namespace AutoKey
                     try
                     {
                         await SendKeyAsync(key);
-                        int delay = CalcDelay(key);
+                        int delay = CalcDelay(key, keyIndex);
                         await Task.Delay(delay, token);
                         currentLoop++;
                         if (loopCount > 0 && currentLoop >= loopCount) break;
@@ -263,15 +264,16 @@ namespace AutoKey
             {
                 while (!token.IsCancellationRequested)
                 {
-                    foreach (var key in Keys)
+                    for (int i = 0; i < Keys.Count; i++)
                     {
+                        var key = Keys[i];
                         if (token.IsCancellationRequested) break;
                         if (!key.IsEnabled || key.KeyCode <= 0) continue;
                         key.IsRunning = true;
                         try
                         {
                             await SendKeyAsync(key);
-                            int delay = CalcDelay(key);
+                            int delay = CalcDelay(key, i);
                             await Task.Delay(delay, token);
                         }
                         finally
@@ -315,11 +317,11 @@ namespace AutoKey
             StatusText = "已完成";
         }
 
-        private int CalcDelay(KeyConfig key)
+        private int CalcDelay(KeyConfig key, int keyIndex)
         {
             long combinedRange = (long)key.RandomDelay + GlobalRandomDelay;
             int safeRange = (int)Math.Clamp(combinedRange, 0, int.MaxValue / 4);
-            int delay = Humanizer.NextDelay(key.Delay, safeRange);
+            int delay = Humanizer.NextDelay(key.Delay, safeRange, keyIndex);
             return Math.Clamp(delay, 20, int.MaxValue - 1);
         }
 
@@ -330,7 +332,7 @@ namespace AutoKey
                 if (IsWindowBound && _boundWindowHandle != IntPtr.Zero)
                     await NativeInterop.SendKeyToWindowAsync(_boundWindowHandle, key.KeyCode);
                 else
-                    NativeInterop.SendKeyForeground(key.KeyCode);
+                    await NativeInterop.SendKeyForegroundAsync(key.KeyCode);
             }
             catch (Exception ex)
             {

@@ -189,30 +189,35 @@ namespace AutoKey
         /// Send a key press to the foreground using SendInput.
         /// Uses randomized press duration to mimic human typing.
         /// </summary>
-        public static void SendKeyForeground(int vkCode)
+        public static async Task SendKeyForegroundAsync(int vkCode)
         {
-            INPUT[] inputs = new INPUT[2];
-            inputs[0].type = INPUT_KEYBOARD;
-            inputs[0].u.ki = new KEYBDINPUT
-            {
-                wVk = (ushort)vkCode,
-                wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
-                dwFlags = 0,
-                time = 0,
-                dwExtraInfo = IntPtr.Zero
-            };
+            int pressDuration = Humanizer.NextPressDuration();
 
-            inputs[1].type = INPUT_KEYBOARD;
-            inputs[1].u.ki = new KEYBDINPUT
-            {
-                wVk = (ushort)vkCode,
-                wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
-                dwFlags = KEYEVENTF_KEYUP,
-                time = 0,
-                dwExtraInfo = IntPtr.Zero
-            };
+            SendInput(1, new[] { CreateKeyboardInput(vkCode, false) }, Marshal.SizeOf(typeof(INPUT)));
+            await Task.Delay(pressDuration);
+            SendInput(1, new[] { CreateKeyboardInput(vkCode, true) }, Marshal.SizeOf(typeof(INPUT)));
+        }
 
-            SendInput(2, inputs, Marshal.SizeOf(typeof(INPUT)));
+        public static void SendKeyForeground(int vkCode)
+            => SendKeyForegroundAsync(vkCode).GetAwaiter().GetResult();
+
+        private static INPUT CreateKeyboardInput(int vkCode, bool keyUp)
+        {
+            return new INPUT
+            {
+                type = INPUT_KEYBOARD,
+                u = new INPUTUNION
+                {
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = (ushort)vkCode,
+                        wScan = (ushort)MapVirtualKey((uint)vkCode, 0),
+                        dwFlags = keyUp ? KEYEVENTF_KEYUP : 0u,
+                        time = 0,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
         }
 
         /// <summary>

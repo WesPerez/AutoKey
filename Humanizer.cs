@@ -1,85 +1,87 @@
 using System;
+using System.Collections.Generic;
 
 namespace AutoKey
 {
     public static class Humanizer
     {
+        private sealed class DelayState
+        {
+            public int LastDelay { get; set; }
+            public int ConsecutiveCount { get; set; }
+            public int KeystrokesSincePause { get; set; }
+        }
+
         private static readonly Random _rng = new();
         private static readonly object _lock = new();
+        private static readonly Dictionary<int, DelayState> _delayStates = new();
         private static double _spareGaussian;
         private static bool _hasSpareGaussian;
-
-        // Anti-repeat: track recent values to avoid patterns
-        private static int _lastDelay;
         private static int _lastPressDuration;
-        private static int _consecutiveCount;
 
-        // Micro-pause: fatigue model — probability rises with keystroke count, resets after pause
-        private static int _keystrokesSincePause;
+        private const int DefaultProfileId = 0;
+        private const int MinimumDelay = 20;
         private const int FatigueThreshold = 12;
 
         public static int AntiPatternLevel { get; set; } = 2;
 
-        public static int NextDelay(int baseDelay, int randomRange)
+        public static void Reset()
         {
             lock (_lock)
             {
-                int delay;
+                _delayStates.Clear();
+                _lastPressDuration = 0;
+                _hasSpareGaussian = false;
+                _spareGaussian = 0;
+            }
+        }
 
+        public static int NextDelay(int baseDelay, int randomRange)
+            => NextDelay(baseDelay, randomRange, DefaultProfileId);
+
+        public static int NextDelay(int baseDelay, int randomRange, int profileId)
+        {
+            lock (_lock)
+            {
+                baseDelay = Math.Max(0, baseDelay);
+                randomRange = Math.Max(0, randomRange);
+
+                var state = GetDelayState(profileId);
+                int minDelay = GetMinimumDelay(baseDelay);
+                int maxDelay = randomRange > 0
+                    ? (int)Math.Min(int.MaxValue - 1L, (long)baseDelay + randomRange)
+                    : Math.Max(minDelay, baseDelay);
+
+                int delay = baseDelay;
                 if (randomRange > 0)
                 {
-                    // Core jitter: Gaussian centered on baseDelay
-                    int jitter = (int)(NextGaussian() * randomRange * 0.4);
+                    double sigma = Math.Max(1.0, randomRange / 3.0);
+                    int jitter = (int)Math.Round(NextGaussian() * sigma);
+                    jitter = Math.Clamp(jitter, minDelay - baseDelay, randomRange);
                     delay = baseDelay + jitter;
                 }
-                else
-                {
-                    delay = baseDelay;
-                }
+
+                delay = Math.Clamp(delay, minDelay, maxDelay);
 
                 if (AntiPatternLevel >= 1)
                 {
-                    // Anti-repeat: avoid exact or near-exact repetition
-                    if (delay == _lastDelay)
-                    {
-                        delay += _rng.Next(2, 20) * (_rng.Next(0, 2) == 0 ? 1 : -1);
-                    }
-                    else if (Math.Abs(delay - _lastDelay) < 3)
-                    {
-                        delay += _rng.Next(5, 15) * (delay > _lastDelay ? 1 : -1);
-                    }
-
-                    // Track consecutive similarity
-                    if (Math.Abs(delay - _lastDelay) < 8)
-                        _consecutiveCount++;
-                    else
-                        _consecutiveCount = 0;
-
-                    // Break streaks: if too many similar delays in a row, force a larger deviation
-                    if (_consecutiveCount >= 3)
-                    {
-                        delay += _rng.Next(15, 40) * (_rng.Next(0, 2) == 0 ? 1 : -1);
-                        _consecutiveCount = 0;
-                    }
+                    delay = ApplyAntiRepeat(delay, state, minDelay, maxDelay);
                 }
 
                 if (AntiPatternLevel >= 2)
                 {
-                    // Fatigue-based micro-pause: probability grows with keystrokes since last pause
-                    _keystrokesSincePause++;
-                    double pauseProbability = Math.Min(0.25, _keystrokesSincePause / (double)FatigueThreshold * 0.08);
+                    state.KeystrokesSincePause++;
+                    double pauseProbability = Math.Min(0.18, state.KeystrokesSincePause / (double)FatigueThreshold * 0.06);
 
                     if (_rng.NextDouble() < pauseProbability)
                     {
-                        // Pause duration scales with fatigue level
-                        int fatigueFactor = Math.Min(_keystrokesSincePause / 5, 4);
-                        delay += _rng.Next(40, 80 + fatigueFactor * 30);
-                        _keystrokesSincePause = 0;
+                        int fatigueFactor = Math.Min(state.KeystrokesSincePause / 5, 4);
+                        delay = (int)Math.Min(int.MaxValue - 1L, (long)delay + _rng.Next(35, 75 + fatigueFactor * 25));
+                        state.KeystrokesSincePause = 0;
                     }
                 }
 
-                delay = Math.Max(20, delay);
-                _lastDelay = delay;
+                state.LastDelay = delay;
                 return delay;
             }
         }
@@ -88,34 +90,93 @@ namespace AutoKey
         {
             lock (_lock)
             {
-                int duration;
+                if (AntiPatternLevel <= 0)
+                    return 45;
 
-                // Bimodal distribution: fast tap (85%) vs deliberate press (15%)
-                if (_rng.NextDouble() < 0.85)
-                {
-                    // Fast tap: 35-65ms, peaked around 45ms
-                    duration = 35 + (int)(Math.Abs(NextGaussian()) * 12);
-                }
-                else
-                {
-                    // Deliberate press: 80-160ms, peaked around 110ms
-                    duration = 80 + (int)(Math.Abs(NextGaussian()) * 30);
-                }
+                int duration = _rng.NextDouble() < 0.85
+                    ? 35 + (int)(Math.Abs(NextGaussian()) * 12)
+                    : 80 + (int)(Math.Abs(NextGaussian()) * 30);
 
                 duration = Math.Clamp(duration, 20, 200);
 
-                if (AntiPatternLevel >= 1)
+                if (AntiPatternLevel >= 1 && duration == _lastPressDuration)
                 {
-                    // Anti-repeat for press duration
-                    if (duration == _lastPressDuration)
-                        duration += _rng.Next(2, 8) * (_rng.Next(0, 2) == 0 ? 1 : -1);
-
+                    duration += _rng.Next(2, 8) * (_rng.Next(0, 2) == 0 ? 1 : -1);
                     duration = Math.Clamp(duration, 20, 200);
                 }
 
                 _lastPressDuration = duration;
                 return duration;
             }
+        }
+
+        private static DelayState GetDelayState(int profileId)
+        {
+            if (!_delayStates.TryGetValue(profileId, out var state))
+            {
+                state = new DelayState();
+                _delayStates[profileId] = state;
+            }
+
+            return state;
+        }
+
+        private static int GetMinimumDelay(int baseDelay)
+        {
+            if (baseDelay <= MinimumDelay)
+                return MinimumDelay;
+
+            if (baseDelay < 1000)
+                return Math.Max(MinimumDelay, baseDelay / 2);
+
+            return MinimumDelay;
+        }
+
+        private static int ApplyAntiRepeat(int delay, DelayState state, int minDelay, int maxDelay)
+        {
+            if (state.LastDelay <= 0 || minDelay >= maxDelay)
+                return delay;
+
+            int delta = Math.Abs(delay - state.LastDelay);
+            if (delta <= 2)
+            {
+                delay = NudgeAway(delay, state.LastDelay, minDelay, maxDelay, 2, 18);
+            }
+
+            if (Math.Abs(delay - state.LastDelay) < 8)
+                state.ConsecutiveCount++;
+            else
+                state.ConsecutiveCount = 0;
+
+            if (state.ConsecutiveCount >= 3)
+            {
+                delay = NudgeAway(delay, state.LastDelay, minDelay, maxDelay, 15, 40);
+                state.ConsecutiveCount = 0;
+            }
+
+            return delay;
+        }
+
+        private static int NudgeAway(int delay, int lastDelay, int minDelay, int maxDelay, int minStep, int maxStep)
+        {
+            int step = _rng.Next(minStep, maxStep + 1);
+            int upRoom = maxDelay - delay;
+            int downRoom = delay - minDelay;
+
+            bool preferUp = delay >= lastDelay;
+            if (preferUp && upRoom > 0)
+                return delay + Math.Min(step, upRoom);
+
+            if (!preferUp && downRoom > 0)
+                return delay - Math.Min(step, downRoom);
+
+            if (upRoom >= downRoom && upRoom > 0)
+                return delay + Math.Min(step, upRoom);
+
+            if (downRoom > 0)
+                return delay - Math.Min(step, downRoom);
+
+            return delay;
         }
 
         private static double NextGaussian()
