@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using AutoKey.Controls;
 using Forms = System.Windows.Forms;
 using Microsoft.Win32;
@@ -100,6 +101,8 @@ namespace AutoKey
                 // Create system tray icon
                 SetupTrayIcon();
 
+                // Taskbar overlay for pinned icon badge
+                TaskbarItemInfo = new TaskbarItemInfo();
 
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
@@ -295,7 +298,11 @@ namespace AutoKey
                 var trayIcon = GetTrayStatusIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
                 UpdateTrayIconSafe(trayIcon);
 
-                Icon = CreateTaskbarIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
+                if (TaskbarItemInfo != null)
+                {
+                    var accent = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+                    TaskbarItemInfo.Overlay = CreateBadgeOverlay(accent, ViewModel.SelectedConfig);
+                }
             }
             catch (Exception ex)
             {
@@ -362,41 +369,25 @@ namespace AutoKey
             }
         }
 
-        private static ImageSource CreateTaskbarIcon(bool isRunning, string configName)
+        private static ImageSource CreateBadgeOverlay(Color accent, string configName)
         {
-            const int size = 32;
-            var accent = isRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+            const int size = 16;
             string badgeText = GetConfigBadgeText(configName);
 
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                // Base: the original app.ico
-                try
-                {
-                    var iconUri = new Uri("pack://application:,,,/app.ico");
-                    var decoder = BitmapDecoder.Create(iconUri, BitmapCreateOptions.None, BitmapCacheOption.Default);
-                    var frame = decoder.Frames[0];
-                    dc.DrawImage(frame, new Rect(0, 0, size, size));
-                }
-                catch
-                {
-                    dc.DrawRoundedRectangle(Brushes.White,
-                        new Pen(Brushes.Gray, 1), new Rect(2, 2, 28, 28), 6, 6);
-                }
-
-                // Large badge circle top-right, color = running state
-                double badgeRadius = badgeText.Length > 1 ? 8.5 : 8;
-                var badgeCenter = new Point(23.5, 8.5);
+                double badgeRadius = badgeText.Length > 1 ? 7 : 6.5;
+                var badgeCenter = new Point(10.5, 5.5);
                 dc.DrawEllipse(new SolidColorBrush(accent),
-                    new Pen(Brushes.White, 1.5), badgeCenter, badgeRadius, badgeRadius);
+                    new Pen(Brushes.White, 1.2), badgeCenter, badgeRadius, badgeRadius);
 
                 var text = new FormattedText(
                     badgeText,
                     CultureInfo.CurrentUICulture,
                     FlowDirection.LeftToRight,
                     new Typeface("Segoe UI"),
-                    badgeText.Length > 1 ? 8.5 : 11,
+                    badgeText.Length > 1 ? 7.5 : 10,
                     Brushes.White,
                     1.0);
                 dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
@@ -1054,6 +1045,7 @@ namespace AutoKey
 
     #endregion
 }
+
 
 
 
