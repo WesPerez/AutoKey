@@ -370,45 +370,60 @@ namespace AutoKey
             {
                 var accent = isRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
 
-                // Dark rounded background
+                // White rounded background
                 dc.DrawRoundedRectangle(
-                    new SolidColorBrush(Color.FromRgb(34, 34, 34)),
-                    null,
+                    Brushes.White,
+                    new Pen(new SolidColorBrush(Color.FromRgb(180, 180, 180)), 1),
                     new Rect(2, 2, 28, 28), 6, 6);
 
-                // Center: white key/loop symbol
-                var keyPen = new Pen(Brushes.White, 2.5);
-                keyPen.StartLineCap = PenLineCap.Round;
-                keyPen.EndLineCap = PenLineCap.Round;
-                dc.DrawEllipse(null, keyPen, new Point(16, 16), 7, 7);
-                dc.DrawLine(keyPen, new Point(16, 5), new Point(16, 9));
-                dc.DrawLine(keyPen, new Point(16, 23), new Point(16, 27));
-                dc.DrawLine(keyPen, new Point(5, 16), new Point(9, 16));
-                dc.DrawLine(keyPen, new Point(23, 16), new Point(27, 16));
-
-                // Small status dot bottom-right inside the icon
-                dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 1),
-                    new Point(22, 22), 4.5, 4.5);
-
-                // Config badge top-right
-                string badgeText = GetConfigBadgeText(configName);
-                if (!string.IsNullOrWhiteSpace(badgeText))
+                // Center: non-closed circle (cycle/refresh symbol)
+                var loopPen = new Pen(new SolidColorBrush(Color.FromRgb(80, 80, 80)), 2.5);
+                loopPen.StartLineCap = PenLineCap.Round;
+                loopPen.EndLineCap = PenLineCap.Round;
+                // Draw arc from ~45 to ~315 degrees, leaving a gap at top-right
+                var arcGeometry = new StreamGeometry();
+                using (var ctx = arcGeometry.Open())
                 {
-                    double badgeRadius = badgeText.Length > 1 ? 6 : 5.5;
-                    var badgeCenter = new Point(22.5, 8.5);
-                    dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(25, 84, 190)),
-                        new Pen(Brushes.White, 1), badgeCenter, badgeRadius, badgeRadius);
-
-                    var text = new FormattedText(
-                        badgeText,
-                        CultureInfo.CurrentUICulture,
-                        FlowDirection.LeftToRight,
-                        new Typeface("Segoe UI"),
-                        badgeText.Length > 1 ? 7.5 : 9.5,
-                        Brushes.White,
-                        1.0);
-                    dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
+                    var center = new Point(16, 16);
+                    double r = 7;
+                    // Arc from 300 deg (bottom-right-ish) clockwise to 60 deg (top-right-ish), leaving gap at top
+                    double startAngle = 300 * Math.PI / 180;
+                    double endAngle = (360 + 60) * Math.PI / 180;
+                    bool isLargeArc = (endAngle - startAngle) > Math.PI;
+                    var startPoint = new Point(center.X + r * Math.Cos(startAngle), center.Y + r * Math.Sin(startAngle));
+                    var endPoint = new Point(center.X + r * Math.Cos(endAngle), center.Y + r * Math.Sin(endAngle));
+                    ctx.BeginFigure(startPoint, false, false);
+                    ctx.ArcTo(endPoint, new Size(r, r), 0, isLargeArc, SweepDirection.Clockwise, true, false);
                 }
+                dc.DrawGeometry(null, loopPen, arcGeometry);
+
+                // Arrow heads at both ends
+                var arrowPen = new Pen(new SolidColorBrush(Color.FromRgb(80, 80, 80)), 2.5);
+                arrowPen.StartLineCap = PenLineCap.Round;
+                arrowPen.EndLineCap = PenLineCap.Round;
+                // Top arrow head
+                dc.DrawLine(arrowPen, new Point(19.5, 10.5), new Point(22.5, 8));
+                dc.DrawLine(arrowPen, new Point(19.5, 10.5), new Point(21, 13.5));
+                // Bottom arrow head
+                dc.DrawLine(arrowPen, new Point(12.5, 21.5), new Point(9.5, 24));
+                dc.DrawLine(arrowPen, new Point(12.5, 21.5), new Point(11, 18.5));
+
+                // Config badge top-right (uses accent color for running state)
+                string badgeText = GetConfigBadgeText(configName);
+                double badgeRadius = badgeText.Length > 1 ? 6 : 5.5;
+                var badgeCenter = new Point(22.5, 8.5);
+                dc.DrawEllipse(new SolidColorBrush(accent),
+                    new Pen(Brushes.White, 1), badgeCenter, badgeRadius, badgeRadius);
+
+                var text = new FormattedText(
+                    badgeText,
+                    CultureInfo.CurrentUICulture,
+                    FlowDirection.LeftToRight,
+                    new Typeface("Segoe UI"),
+                    badgeText.Length > 1 ? 7.5 : 9.5,
+                    Brushes.White,
+                    1.0);
+                dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
             }
 
             var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
@@ -1063,5 +1078,6 @@ namespace AutoKey
 
     #endregion
 }
+
 
 
