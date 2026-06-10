@@ -365,62 +365,38 @@ namespace AutoKey
         private static ImageSource CreateTaskbarIcon(bool isRunning, string configName)
         {
             const int size = 32;
+            var accent = isRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+            string badgeText = GetConfigBadgeText(configName);
+
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                var accent = isRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
-
-                // White rounded background
-                dc.DrawRoundedRectangle(
-                    Brushes.White,
-                    new Pen(new SolidColorBrush(Color.FromRgb(180, 180, 180)), 1),
-                    new Rect(2, 2, 28, 28), 6, 6);
-
-                // Center: non-closed circle (cycle/refresh symbol)
-                var loopPen = new Pen(new SolidColorBrush(Color.FromRgb(80, 80, 80)), 2.5);
-                loopPen.StartLineCap = PenLineCap.Round;
-                loopPen.EndLineCap = PenLineCap.Round;
-                // Draw arc from ~45 to ~315 degrees, leaving a gap at top-right
-                var arcGeometry = new StreamGeometry();
-                using (var ctx = arcGeometry.Open())
+                // Base: the original app.ico
+                try
                 {
-                    var center = new Point(16, 16);
-                    double r = 7;
-                    // Arc from 300 deg (bottom-right-ish) clockwise to 60 deg (top-right-ish), leaving gap at top
-                    double startAngle = 300 * Math.PI / 180;
-                    double endAngle = (360 + 60) * Math.PI / 180;
-                    bool isLargeArc = (endAngle - startAngle) > Math.PI;
-                    var startPoint = new Point(center.X + r * Math.Cos(startAngle), center.Y + r * Math.Sin(startAngle));
-                    var endPoint = new Point(center.X + r * Math.Cos(endAngle), center.Y + r * Math.Sin(endAngle));
-                    ctx.BeginFigure(startPoint, false, false);
-                    ctx.ArcTo(endPoint, new Size(r, r), 0, isLargeArc, SweepDirection.Clockwise, true, false);
+                    var iconUri = new Uri("pack://application:,,,/app.ico");
+                    var decoder = BitmapDecoder.Create(iconUri, BitmapCreateOptions.None, BitmapCacheOption.Default);
+                    var frame = decoder.Frames[0];
+                    dc.DrawImage(frame, new Rect(0, 0, size, size));
                 }
-                dc.DrawGeometry(null, loopPen, arcGeometry);
+                catch
+                {
+                    dc.DrawRoundedRectangle(Brushes.White,
+                        new Pen(Brushes.Gray, 1), new Rect(2, 2, 28, 28), 6, 6);
+                }
 
-                // Arrow heads at both ends
-                var arrowPen = new Pen(new SolidColorBrush(Color.FromRgb(80, 80, 80)), 2.5);
-                arrowPen.StartLineCap = PenLineCap.Round;
-                arrowPen.EndLineCap = PenLineCap.Round;
-                // Top arrow head
-                dc.DrawLine(arrowPen, new Point(19.5, 10.5), new Point(22.5, 8));
-                dc.DrawLine(arrowPen, new Point(19.5, 10.5), new Point(21, 13.5));
-                // Bottom arrow head
-                dc.DrawLine(arrowPen, new Point(12.5, 21.5), new Point(9.5, 24));
-                dc.DrawLine(arrowPen, new Point(12.5, 21.5), new Point(11, 18.5));
-
-                // Config badge top-right (uses accent color for running state)
-                string badgeText = GetConfigBadgeText(configName);
-                double badgeRadius = badgeText.Length > 1 ? 6 : 5.5;
-                var badgeCenter = new Point(22.5, 8.5);
+                // Large badge circle top-right, color = running state
+                double badgeRadius = badgeText.Length > 1 ? 8.5 : 8;
+                var badgeCenter = new Point(23.5, 8.5);
                 dc.DrawEllipse(new SolidColorBrush(accent),
-                    new Pen(Brushes.White, 1), badgeCenter, badgeRadius, badgeRadius);
+                    new Pen(Brushes.White, 1.5), badgeCenter, badgeRadius, badgeRadius);
 
                 var text = new FormattedText(
                     badgeText,
                     CultureInfo.CurrentUICulture,
                     FlowDirection.LeftToRight,
                     new Typeface("Segoe UI"),
-                    badgeText.Length > 1 ? 7.5 : 9.5,
+                    badgeText.Length > 1 ? 8.5 : 11,
                     Brushes.White,
                     1.0);
                 dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
@@ -1078,6 +1054,7 @@ namespace AutoKey
 
     #endregion
 }
+
 
 
 
