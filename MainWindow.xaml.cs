@@ -384,7 +384,7 @@ namespace AutoKey
             using (var dc = visual.RenderOpen())
             {
                 bool isSingleChar = badgeText.Length <= 1;
-                double badgeRadius = isSingleChar ? 7.2 : 8.5;
+                double badgeRadius = isSingleChar ? 8.6 : 10.2;
                 var badgeCenter = new Point(10.5, 5.5);
                 dc.DrawEllipse(new SolidColorBrush(accent),
                     new Pen(Brushes.White, 1.2), badgeCenter, badgeRadius, badgeRadius);
@@ -394,7 +394,7 @@ namespace AutoKey
                     CultureInfo.CurrentUICulture,
                     FlowDirection.LeftToRight,
                     new Typeface("Segoe UI"),
-                    isSingleChar ? 11 : 8.5,
+                    isSingleChar ? 13.2 : 10.2,
                     Brushes.White,
                     1.0);
                 dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
