@@ -11,7 +11,6 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
-using System.Windows.Shell;
 using AutoKey.Controls;
 using Forms = System.Windows.Forms;
 using Microsoft.Win32;
@@ -101,8 +100,6 @@ namespace AutoKey
                 // Create system tray icon
                 SetupTrayIcon();
 
-                // Initialize taskbar overlay (needed for pinned taskbar icon)
-                TaskbarItemInfo = new TaskbarItemInfo();
 
                 ViewModel.LoadAppState();
                 ViewModel.RefreshConfigList();
@@ -295,17 +292,10 @@ namespace AutoKey
             try
             {
                 Title = BuildWindowTitle();
-                var icon = GetTrayStatusIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
+                var trayIcon = GetTrayStatusIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
+                UpdateTrayIconSafe(trayIcon);
 
-                UpdateTrayIconSafe(icon);
-
-                // Keep the taskbar base icon as app.ico for pinned/unpinned consistency.
-                // Use overlay for runtime state and config badge.
-                if (TaskbarItemInfo != null)
-                {
-                    var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
-                    TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor, ViewModel.SelectedConfig);
-                }
+                Icon = CreateTaskbarIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
             }
             catch (Exception ex)
             {
@@ -372,37 +362,55 @@ namespace AutoKey
             }
         }
 
-        private static ImageSource CreateOverlayIcon(Color accent, string configName)
+        private static ImageSource CreateTaskbarIcon(bool isRunning, string configName)
         {
-            const int size = 16;
+            const int size = 32;
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
+                var accent = isRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
+
+                // Dark rounded background
+                dc.DrawRoundedRectangle(
+                    new SolidColorBrush(Color.FromRgb(34, 34, 34)),
+                    null,
+                    new Rect(2, 2, 28, 28), 6, 6);
+
+                // Center: white key/loop symbol
+                var keyPen = new Pen(Brushes.White, 2.5);
+                keyPen.StartLineCap = PenLineCap.Round;
+                keyPen.EndLineCap = PenLineCap.Round;
+                dc.DrawEllipse(null, keyPen, new Point(16, 16), 7, 7);
+                dc.DrawLine(keyPen, new Point(16, 5), new Point(16, 9));
+                dc.DrawLine(keyPen, new Point(16, 23), new Point(16, 27));
+                dc.DrawLine(keyPen, new Point(5, 16), new Point(9, 16));
+                dc.DrawLine(keyPen, new Point(23, 16), new Point(27, 16));
+
+                // Small status dot bottom-right inside the icon
+                dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 1),
+                    new Point(22, 22), 4.5, 4.5);
+
+                // Config badge top-right
                 string badgeText = GetConfigBadgeText(configName);
-                if (string.IsNullOrWhiteSpace(badgeText))
+                if (!string.IsNullOrWhiteSpace(badgeText))
                 {
-                    dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 0.8),
-                        new Point(8, 8), 4.5, 4.5);
-                }
-                else
-                {
+                    double badgeRadius = badgeText.Length > 1 ? 6 : 5.5;
+                    var badgeCenter = new Point(22.5, 8.5);
                     dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(25, 84, 190)),
-                        new Pen(Brushes.White, 0.8),
-                        new Point(11.2, 4.8),
-                        badgeText.Length > 1 ? 5.7 : 5.2,
-                        5.2);
+                        new Pen(Brushes.White, 1), badgeCenter, badgeRadius, badgeRadius);
 
                     var text = new FormattedText(
                         badgeText,
                         CultureInfo.CurrentUICulture,
                         FlowDirection.LeftToRight,
                         new Typeface("Segoe UI"),
-                        badgeText.Length > 1 ? 6.8 : 8.3,
+                        badgeText.Length > 1 ? 7.5 : 9.5,
                         Brushes.White,
                         1.0);
-                    dc.DrawText(text, new Point(11.2 - (text.Width / 2), 4.8 - (text.Height / 2) - 0.5));
+                    dc.DrawText(text, new Point(badgeCenter.X - text.Width / 2, badgeCenter.Y - text.Height / 2));
                 }
             }
+
             var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(visual);
             bitmap.Freeze();
@@ -1055,4 +1063,5 @@ namespace AutoKey
 
     #endregion
 }
+
 
