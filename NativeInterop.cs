@@ -117,6 +117,12 @@ namespace AutoKey
 
         [DllImport("user32.dll")]
         public static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+        [DllImport("user32.dll")]
+        public static extern short GetAsyncKeyState(int vKey);
+
+        public static bool IsKeyDown(int vKey)
+            => (GetAsyncKeyState(vKey) & unchecked((short)0x8000)) != 0;
         #endregion
 
         #region Hotkey Functions

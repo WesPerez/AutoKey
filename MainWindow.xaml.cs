@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -37,8 +38,7 @@ namespace AutoKey
         private MainWindowViewModel ViewModel { get; } = new();
         private IntPtr _windowHandle;
         private HwndSource? _hwndSource;
-        private System.Drawing.Icon? _stoppedTrayIcon;
-        private System.Drawing.Icon? _runningTrayIcon;
+        private readonly Dictionary<string, System.Drawing.Icon> _trayIconCache = new();
         private string _lastValidConfigName = "默认";
         private bool _refreshingConfigCombo;
 
@@ -150,6 +150,9 @@ namespace AutoKey
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
 
             _trayIcon?.Dispose();
+            foreach (var icon in _trayIconCache.Values)
+                icon.Dispose();
+            _trayIconCache.Clear();
         }
 
         #region Tray Icon
@@ -246,7 +249,8 @@ namespace AutoKey
 
         private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
         {
-            if (e.PropertyName == nameof(MainWindowViewModel.IsRunning))
+            if (e.PropertyName == nameof(MainWindowViewModel.IsRunning) ||
+                e.PropertyName == nameof(MainWindowViewModel.SelectedConfig))
                 Dispatcher.BeginInvoke(new Action(UpdateWindowIcon));
         }
 
@@ -254,14 +258,14 @@ namespace AutoKey
         {
             try
             {
-                _stoppedTrayIcon ??= CreateTrayStatusIcon(false);
-                _runningTrayIcon ??= CreateTrayStatusIcon(true);
-
-                var icon = ViewModel.IsRunning ? _runningTrayIcon : _stoppedTrayIcon;
+                var icon = GetTrayStatusIcon(ViewModel.IsRunning, ViewModel.SelectedConfig);
 
                 // Update tray icon
                 if (_trayIcon != null)
+                {
                     _trayIcon.Icon = icon;
+                    _trayIcon.Text = BuildTrayTooltip();
+                }
 
                 // Force taskbar icon update via WM_SETICON
                 if (_windowHandle != IntPtr.Zero)
@@ -274,7 +278,7 @@ namespace AutoKey
                 if (TaskbarItemInfo != null)
                 {
                     var overlayColor = ViewModel.IsRunning ? Colors.LimeGreen : Color.FromRgb(211, 47, 47);
-                    TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor);
+                    TaskbarItemInfo.Overlay = CreateOverlayIcon(overlayColor, ViewModel.SelectedConfig);
                 }
             }
             catch (Exception ex)
@@ -283,7 +287,19 @@ namespace AutoKey
             }
         }
 
-        private static System.Drawing.Icon CreateTrayStatusIcon(bool isRunning)
+        private System.Drawing.Icon GetTrayStatusIcon(bool isRunning, string configName)
+        {
+            string key = $"{isRunning}:{GetConfigBadgeText(configName)}";
+            if (!_trayIconCache.TryGetValue(key, out var icon))
+            {
+                icon = CreateTrayStatusIcon(isRunning, configName);
+                _trayIconCache[key] = icon;
+            }
+
+            return icon;
+        }
+
+        private static System.Drawing.Icon CreateTrayStatusIcon(bool isRunning, string configName)
         {
             const int size = 32;
             using var bmp = new System.Drawing.Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
@@ -314,24 +330,79 @@ namespace AutoKey
                 // White border
                 using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2);
                 g.DrawEllipse(pen, 8, 8, 16, 16);
+
+                DrawConfigBadge(g, new System.Drawing.Rectangle(17, 1, 14, 14), configName);
             }
 
             IntPtr hIcon = bmp.GetHicon();
             return System.Drawing.Icon.FromHandle(hIcon);
         }
 
-        private static ImageSource CreateOverlayIcon(Color accent)
+        private static ImageSource CreateOverlayIcon(Color accent, string configName)
         {
             const int size = 16;
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
                 dc.DrawEllipse(new SolidColorBrush(accent), null, new Point(8, 8), 7, 7);
+                string badgeText = GetConfigBadgeText(configName);
+                if (!string.IsNullOrWhiteSpace(badgeText))
+                {
+                    var text = new FormattedText(
+                        badgeText,
+                        CultureInfo.CurrentUICulture,
+                        FlowDirection.LeftToRight,
+                        new Typeface("Segoe UI"),
+                        badgeText.Length > 1 ? 7 : 9,
+                        Brushes.White,
+                        1.0);
+                    dc.DrawText(text, new Point((size - text.Width) / 2, (size - text.Height) / 2 - 0.5));
+                }
             }
             var bitmap = new RenderTargetBitmap(size, size, 96, 96, PixelFormats.Pbgra32);
             bitmap.Render(visual);
             bitmap.Freeze();
             return bitmap;
+        }
+
+        private string BuildTrayTooltip()
+        {
+            string state = ViewModel.IsRunning ? "运行中" : "已停止";
+            string text = $"AutoKey - {ViewModel.SelectedConfig} - {state}";
+            return text.Length > 63 ? text[..63] : text;
+        }
+
+        private static void DrawConfigBadge(System.Drawing.Graphics g, System.Drawing.Rectangle rect, string configName)
+        {
+            string badgeText = GetConfigBadgeText(configName);
+            if (string.IsNullOrWhiteSpace(badgeText))
+                return;
+
+            using var badgeBrush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(25, 84, 190));
+            using var borderPen = new System.Drawing.Pen(System.Drawing.Color.White, 1);
+            g.FillEllipse(badgeBrush, rect);
+            g.DrawEllipse(borderPen, rect);
+
+            float fontSize = badgeText.Length > 1 ? 6.5f : 8.5f;
+            using var font = new System.Drawing.Font("Segoe UI", fontSize, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Pixel);
+            using var textBrush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+            using var format = new System.Drawing.StringFormat
+            {
+                Alignment = System.Drawing.StringAlignment.Center,
+                LineAlignment = System.Drawing.StringAlignment.Center
+            };
+            g.DrawString(badgeText, font, textBrush, rect, format);
+        }
+
+        private static string GetConfigBadgeText(string? configName)
+        {
+            if (string.IsNullOrWhiteSpace(configName))
+                return "";
+
+            string cleaned = new string(configName.Trim().Where(char.IsLetterOrDigit).Take(2).ToArray());
+            return string.IsNullOrWhiteSpace(cleaned)
+                ? configName.Trim()[0].ToString()
+                : cleaned.ToUpperInvariant();
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -453,12 +524,19 @@ namespace AutoKey
 
                 if (isKeyDown)
                 {
+                    PruneReleasedHotkeyKeys();
                     _pressedVirtualKeys.Add(vk);
                 }
                 else if (isKeyUp)
                 {
+                    if (!_hotkeyHandledUntilRelease && !IsEditingInputInThisWindow())
+                    {
+                        if (TryHandleConfigHotkey())
+                            _hotkeyHandledUntilRelease = true;
+                    }
+
                     _pressedVirtualKeys.Remove(vk);
-                    if (_pressedVirtualKeys.Count == 0)
+                    if (!HotkeyGesture.IsModifier(vk) || _pressedVirtualKeys.Count == 0)
                         _hotkeyHandledUntilRelease = false;
                 }
 
@@ -532,6 +610,22 @@ namespace AutoKey
             }
 
             return false;
+        }
+
+        private void PruneReleasedHotkeyKeys()
+        {
+            var releasedKeys = new List<int>();
+            foreach (int pressedKey in _pressedVirtualKeys)
+            {
+                if (!NativeInterop.IsKeyDown(pressedKey))
+                    releasedKeys.Add(pressedKey);
+            }
+
+            foreach (int releasedKey in releasedKeys)
+                _pressedVirtualKeys.Remove(releasedKey);
+
+            if (_pressedVirtualKeys.Count == 0)
+                _hotkeyHandledUntilRelease = false;
         }
 
         private bool IsEditingInputInThisWindow()
