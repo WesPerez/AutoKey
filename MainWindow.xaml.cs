@@ -331,7 +331,7 @@ namespace AutoKey
                 using var pen = new System.Drawing.Pen(System.Drawing.Color.White, 2);
                 g.DrawEllipse(pen, 8, 8, 16, 16);
 
-                DrawConfigBadge(g, new System.Drawing.Rectangle(11, 0, 21, 21), configName);
+                DrawConfigBadge(g, new System.Drawing.Rectangle(14, -3, 23, 23), configName);
             }
 
             IntPtr hIcon = bmp.GetHicon();
@@ -383,7 +383,7 @@ namespace AutoKey
             g.FillEllipse(badgeBrush, rect);
             g.DrawEllipse(borderPen, rect);
 
-            float fontSize = badgeText.Length > 1 ? 9.5f : 12.5f;
+            float fontSize = badgeText.Length > 1 ? 10.5f : 13.5f;
             using var font = new System.Drawing.Font("Segoe UI", fontSize, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Pixel);
             using var textBrush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
             using var format = new System.Drawing.StringFormat
