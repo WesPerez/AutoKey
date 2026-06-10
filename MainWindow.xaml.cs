@@ -399,9 +399,13 @@ namespace AutoKey
             if (string.IsNullOrWhiteSpace(configName))
                 return "";
 
-            string cleaned = new string(configName.Trim().Where(char.IsLetterOrDigit).Take(2).ToArray());
+            string trimmed = configName.Trim();
+            if (string.Equals(trimmed, "默认", StringComparison.OrdinalIgnoreCase))
+                return "0";
+
+            string cleaned = new string(trimmed.Where(char.IsLetterOrDigit).Take(2).ToArray());
             return string.IsNullOrWhiteSpace(cleaned)
-                ? configName.Trim()[0].ToString()
+                ? trimmed[0].ToString()
                 : cleaned.ToUpperInvariant();
         }
 
