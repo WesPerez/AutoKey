@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
@@ -378,9 +378,13 @@ namespace AutoKey
             var visual = new DrawingVisual();
             using (var dc = visual.RenderOpen())
             {
-                dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 1), new Point(6, 10), 4.8, 4.8);
                 string badgeText = GetConfigBadgeText(configName);
-                if (!string.IsNullOrWhiteSpace(badgeText))
+                if (string.IsNullOrWhiteSpace(badgeText))
+                {
+                    dc.DrawEllipse(new SolidColorBrush(accent), new Pen(Brushes.White, 0.8),
+                        new Point(8, 8), 4.5, 4.5);
+                }
+                else
                 {
                     dc.DrawEllipse(new SolidColorBrush(Color.FromRgb(25, 84, 190)),
                         new Pen(Brushes.White, 0.8),
@@ -1051,3 +1055,4 @@ namespace AutoKey
 
     #endregion
 }
+
